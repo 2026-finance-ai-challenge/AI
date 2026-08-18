@@ -23,11 +23,12 @@
 cp .env.example .env
 uv sync --locked
 uv run uvicorn k_market_ai.main:app --host 127.0.0.1 --port 8000
+uv run k-market-rag-worker
 ```
 
 `.env`는 로컬에서만 사용하며 Git에 포함하지 않는다. 배포 환경의 설정은 실행 시점에 외부에서 주입한다.
 
-상태 확인은 `GET /health`를 사용한다. 운영 환경에서는 API 문서가 비활성화된다.
+API 서버와 공시 색인 워커는 별도 프로세스로 실행한다. 상태 확인은 `GET /health`를 사용한다. 운영 환경에서는 API 문서가 비활성화된다.
 
 ## 검증
 
