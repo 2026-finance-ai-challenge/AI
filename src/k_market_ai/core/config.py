@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,10 +16,17 @@ class Settings(BaseSettings):
     app_name: str = "K-Market-Navigator AI"
     environment: Literal["local", "test", "production"] = "local"
     allowed_hosts: list[str] = Field(default_factory=lambda: ["localhost", "127.0.0.1"])
+    database_url: SecretStr | None = None
+    service_token: SecretStr | None = None
+    openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
 
     @property
     def docs_enabled(self) -> bool:
         return self.environment != "production"
+
+    @property
+    def api_rag_configured(self) -> bool:
+        return all((self.database_url, self.service_token, self.openai_api_key))
 
 
 @lru_cache
