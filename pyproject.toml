@@ -1,0 +1,54 @@
+[project]
+name = "k-market-navigator-ai"
+version = "0.1.0"
+description = "K-Market-Navigator disclosure RAG service"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "fastapi>=0.139.2,<0.140.0",
+    "numpy>=2.5.0,<3.0.0",
+    "openai>=2.17.0,<3.0.0",
+    "pgvector>=0.4.1,<1.0.0",
+    "psycopg[binary,pool]>=3.3.0,<4.0.0",
+    "pydantic-settings>=2.10.0,<3.0.0",
+    "sentence-transformers>=5.1.0,<6.0.0",
+    "uvicorn[standard]>=0.35.0,<1.0.0",
+]
+
+[project.scripts]
+k-market-rag-worker = "k_market_ai.rag.worker:main"
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.9.0,<3.0.0",
+    "mypy>=1.17.0,<2.0.0",
+    "pytest>=9.0.3,<10.0.0",
+    "pytest-cov>=6.2.0,<8.0.0",
+    "ruff>=0.12.0,<1.0.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0,<2.0.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/k_market_ai"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src/k_market_ai"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=k_market_ai --cov-report=term-missing"
+testpaths = ["tests"]
