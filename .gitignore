@@ -8,3 +8,13 @@
 !.env.example
 
 .codex-log/
+
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+__pycache__/
+*.py[cod]

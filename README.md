@@ -11,4 +11,26 @@
 - [Codex 저장소 지침](AGENTS.md)
 - [Codex 작업 스킬](.agents/skills/k-market-delivery/SKILL.md)
 
-애플리케이션 초기화와 실행 방법은 아키텍처 구축 단계에서 추가한다.
+## 개발 환경
+
+- Python 3.14
+- FastAPI 0.139
+- uv
+
+## 실행
+
+```shell
+uv sync --locked
+uv run uvicorn k_market_ai.main:app --host 127.0.0.1 --port 8000
+```
+
+상태 확인은 `GET /health`를 사용한다. 운영 환경에서는 API 문서가 비활성화된다.
+
+## 검증
+
+```shell
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run pytest
+```
