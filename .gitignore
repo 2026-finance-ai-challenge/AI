@@ -1,0 +1,10 @@
+.DS_Store
+.idea/
+*.iml
+*.log
+
+.env
+.env.*
+!.env.example
+
+.codex-log/
