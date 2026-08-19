@@ -53,11 +53,19 @@ class LocalEmbeddingAdapter:
         with self._load_lock:
             if self._encoder is not None:
                 return self._encoder
+            import torch
             from sentence_transformers import SentenceTransformer
+
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
 
             self._encoder = SentenceTransformer(
                 MODEL_NAME,
                 revision=MODEL_REVISION,
-                device="cpu",
+                device=device,
             )
         return self._encoder
