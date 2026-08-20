@@ -7,6 +7,7 @@ from k_market_ai.rag.domain.models import (
     EmbeddedChunk,
     GeneratedAnswer,
     IndexJob,
+    MetadataEmbeddingJob,
     SearchHit,
     SourceSection,
 )
@@ -52,6 +53,35 @@ class RagRepository(Protocol):
     ) -> None: ...
 
     async def fail_index_job(self, receipt_number: str, error_code: str) -> None: ...
+
+    async def claim_metadata_embedding_job(
+        self,
+        worker_id: str,
+    ) -> MetadataEmbeddingJob | None: ...
+
+    async def load_metadata_embedding_text(self, receipt_number: str) -> str: ...
+
+    async def complete_metadata_embedding_job(
+        self,
+        receipt_number: str,
+        embedding: Sequence[float],
+        embedding_model: str,
+        embedding_dimensions: int,
+        source_hash: str,
+    ) -> None: ...
+
+    async def retry_metadata_embedding_job(
+        self,
+        receipt_number: str,
+        error_code: str,
+        delay: timedelta,
+    ) -> None: ...
+
+    async def fail_metadata_embedding_job(
+        self,
+        receipt_number: str,
+        error_code: str,
+    ) -> None: ...
 
     async def selected_text_exists(
         self,

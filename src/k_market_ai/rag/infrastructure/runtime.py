@@ -9,6 +9,8 @@ from psycopg_pool import AsyncConnectionPool
 from k_market_ai.core.config import Settings
 from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
 from k_market_ai.rag.application.index_disclosure import IndexDisclosureHandler
+from k_market_ai.rag.application.index_metadata import IndexMetadataHandler
+from k_market_ai.rag.application.index_worker import IndexWorkerHandler
 from k_market_ai.rag.infrastructure.local_embedding import LocalEmbeddingAdapter
 from k_market_ai.rag.infrastructure.openai_answer import OpenAIAnswerAdapter
 from k_market_ai.rag.infrastructure.postgres_repository import (
@@ -56,7 +58,7 @@ class ApiRagRuntime:
 @dataclass(slots=True)
 class WorkerRagRuntime:
     pool: AsyncConnectionPool[AsyncConnection[object]]
-    handler: IndexDisclosureHandler
+    handler: IndexWorkerHandler
 
     @classmethod
     def create(cls, settings: Settings) -> WorkerRagRuntime:
@@ -64,9 +66,13 @@ class WorkerRagRuntime:
             raise RuntimeError("RAG worker database configuration is incomplete")
         pool = create_pool(settings.database_url.get_secret_value())
         repository = PostgresRagRepository(pool)
+        embedding = LocalEmbeddingAdapter()
         return cls(
             pool=pool,
-            handler=IndexDisclosureHandler(repository, LocalEmbeddingAdapter()),
+            handler=IndexWorkerHandler(
+                IndexDisclosureHandler(repository, embedding),
+                IndexMetadataHandler(repository, embedding),
+            ),
         )
 
     async def open(self) -> None:
