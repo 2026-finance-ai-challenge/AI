@@ -45,19 +45,23 @@ class PostgresRagRepository(RagRepository):
             cursor = await connection.execute(
                 """
                 WITH candidate AS (
-                    SELECT id
-                    FROM ingestion_job
-                    WHERE job_type = %s
-                      AND available_at <= CURRENT_TIMESTAMP
+                    SELECT job.id
+                    FROM ingestion_job AS job
+                    JOIN disclosure ON disclosure.receipt_number = job.business_key
+                    JOIN security ON security.id = disclosure.security_id
+                    WHERE job.job_type = %s
+                      AND security.active
+                      AND security.common_stock
+                      AND job.available_at <= CURRENT_TIMESTAMP
                       AND (
-                          status = 'PENDING'
+                          job.status = 'PENDING'
                           OR (
-                              status = 'PROCESSING'
-                              AND locked_at < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
+                              job.status = 'PROCESSING'
+                              AND job.locked_at < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
                           )
                       )
-                    ORDER BY available_at, created_at
-                    FOR UPDATE SKIP LOCKED
+                    ORDER BY (job.attempts > 0) DESC, job.available_at, job.created_at
+                    FOR UPDATE OF job SKIP LOCKED
                     LIMIT 1
                 )
                 UPDATE ingestion_job AS job
