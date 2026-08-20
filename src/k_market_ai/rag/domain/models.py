@@ -46,6 +46,12 @@ class IndexJob:
 
 
 @dataclass(frozen=True, slots=True)
+class MetadataEmbeddingJob:
+    receipt_number: str
+    attempts: int
+
+
+@dataclass(frozen=True, slots=True)
 class SelectedContext:
     section_id: UUID
     text: str
