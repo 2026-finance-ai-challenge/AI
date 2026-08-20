@@ -55,6 +55,10 @@ class PostgresRagRepository(RagRepository):
                     JOIN security ON security.id = disclosure.security_id
                     JOIN service_stock_universe AS universe
                       ON universe.stock_code = security.stock_code
+                    JOIN disclosure_document AS document
+                      ON document.disclosure_id = disclosure.id
+                     AND document.is_current = TRUE
+                     AND document.payload_zstd IS NOT NULL
                     WHERE job.job_type = %s
                       AND security.active
                       AND security.common_stock
@@ -192,6 +196,12 @@ class PostgresRagRepository(RagRepository):
                         chunker_version,
                     ),
                 )
+
+            # 현재 공시만 검색하므로 이전 버전 청크는 원문 ZIP으로 대체한다.
+            await connection.execute(
+                "DELETE FROM disclosure_chunk WHERE disclosure_id = %s AND is_current = FALSE",
+                (disclosure_id,),
+            )
 
             await connection.execute(
                 """
