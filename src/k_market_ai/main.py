@@ -11,6 +11,7 @@ from k_market_ai.core.request_id import RequestIdMiddleware
 from k_market_ai.news.runtime import NewsRuntime
 from k_market_ai.news.service import NewsIntelligenceService
 from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
+from k_market_ai.rag.application.disclosure_insight import DisclosureInsightService
 from k_market_ai.rag.infrastructure.runtime import ApiRagRuntime
 
 
@@ -18,6 +19,7 @@ def create_app(
     settings: Settings | None = None,
     rag_handler: AskDisclosureHandler | None = None,
     news_service: NewsIntelligenceService | None = None,
+    disclosure_insight_service: DisclosureInsightService | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     docs_url = "/docs" if app_settings.docs_enabled else None
@@ -34,6 +36,11 @@ def create_app(
         if news_service is None and app_settings.news_configured:
             news_runtime = NewsRuntime.create(app_settings)
             app.state.news_service = news_runtime.service
+            if disclosure_insight_service is None:
+                app.state.disclosure_insight_service = DisclosureInsightService(
+                    news_runtime.openai,
+                    app_settings,
+                )
         try:
             yield
         finally:
@@ -54,6 +61,7 @@ def create_app(
     app.state.settings = app_settings
     app.state.rag_handler = rag_handler
     app.state.news_service = news_service
+    app.state.disclosure_insight_service = disclosure_insight_service
     register_exception_handlers(app)
     app.include_router(api_router)
     return app

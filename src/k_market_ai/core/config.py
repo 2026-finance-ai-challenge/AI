@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     news_model: str = "gpt-5-mini"
     news_prompt_version: str = "news-intelligence-v1"
     term_prompt_version: str = "financial-term-v1"
+    filing_summary_prompt_version: str = "filing-summary-v1"
 
     @property
     def docs_enabled(self) -> bool:

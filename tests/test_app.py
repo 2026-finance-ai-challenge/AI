@@ -13,6 +13,7 @@ from k_market_ai.news.domain import (
     NewsSentiment,
     TermExplanation,
 )
+from k_market_ai.rag.application.disclosure_insight import DisclosureInsight
 from k_market_ai.rag.domain.models import Citation, RagAnswer
 
 
@@ -200,6 +201,38 @@ def test_news_endpoints_require_service_token_and_return_structured_results() ->
     assert service.safety_identifier == "a" * 64
 
 
+def test_disclosure_insight_endpoint_requires_token_and_returns_citations() -> None:
+    service_token = str(uuid4())
+    service = FakeDisclosureInsightService()
+    app = create_app(
+        Settings(
+            environment="test",
+            allowed_hosts=["testserver"],
+            service_token=service_token,
+        ),
+        disclosure_insight_service=service,
+    )
+
+    request_body = {
+        "receipt_number": "20260823800001",
+        "title": "Major Business Report",
+        "evidence": [{"id": "S1", "heading": "Investment", "content": "New facility approved."}],
+    }
+    with TestClient(app) as client:
+        missing = client.post("/internal/v1/disclosures/summaries", json=request_body)
+        generated = client.post(
+            "/internal/v1/disclosures/summaries",
+            headers={"authorization": f"Bearer {service_token}"},
+            json=request_body,
+        )
+
+    assert missing.status_code == 401
+    assert generated.status_code == 200
+    assert generated.json()["what"] == "A facility was approved."
+    assert generated.json()["evidence_ids"] == ["S1"]
+    assert service.receipt_number == "20260823800001"
+
+
 class FakeRagHandler:
     def __init__(self, citation: Citation) -> None:
         self._citation = citation
@@ -272,6 +305,31 @@ class FakeNewsService:
             refusal_reason="The supplied context is insufficient.",
             model="test-model",
             prompt_version="test-prompt",
+        )
+
+
+class FakeDisclosureInsightService:
+    def __init__(self) -> None:
+        self.receipt_number: str | None = None
+
+    async def summarize(
+        self,
+        receipt_number: str,
+        title: str,
+        evidence: tuple[object, ...],
+    ) -> DisclosureInsight:
+        self.receipt_number = receipt_number
+        assert title == "Major Business Report"
+        assert len(evidence) == 1
+        return DisclosureInsight(
+            what="A facility was approved.",
+            why="The filing states an expansion purpose.",
+            impact="Capacity may increase.",
+            evidence_ids=("S1",),
+            sufficient_evidence=True,
+            refusal_reason=None,
+            model="test-model",
+            prompt_version="filing-summary-test-v1",
         )
 
 
