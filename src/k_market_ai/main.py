@@ -11,6 +11,7 @@ from k_market_ai.core.exception_handlers import register_exception_handlers
 from k_market_ai.core.request_id import RequestIdMiddleware
 from k_market_ai.news.runtime import NewsRuntime
 from k_market_ai.news.service import NewsIntelligenceService
+from k_market_ai.peers.service import GlobalPeerService
 from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
 from k_market_ai.rag.application.disclosure_insight import DisclosureInsightService
 from k_market_ai.rag.infrastructure.runtime import ApiRagRuntime
@@ -24,6 +25,7 @@ def create_app(
     disclosure_insight_service: DisclosureInsightService | None = None,
     agent_service: MarketAgentService | None = None,
     tax_document_service: TaxDocumentService | None = None,
+    global_peer_service: GlobalPeerService | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     docs_url = "/docs" if app_settings.docs_enabled else None
@@ -51,6 +53,8 @@ def create_app(
                 app.state.tax_document_service = TaxDocumentService(
                     news_runtime.openai, app_settings
                 )
+            if global_peer_service is None:
+                app.state.global_peer_service = GlobalPeerService(news_runtime.openai, app_settings)
         try:
             yield
         finally:
@@ -74,6 +78,7 @@ def create_app(
     app.state.disclosure_insight_service = disclosure_insight_service
     app.state.agent_service = agent_service
     app.state.tax_document_service = tax_document_service
+    app.state.global_peer_service = global_peer_service
     register_exception_handlers(app)
     app.include_router(api_router)
     return app

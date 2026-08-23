@@ -14,6 +14,12 @@ from k_market_ai.news.domain import (
     NewsSentiment,
     TermExplanation,
 )
+from k_market_ai.peers.service import (
+    GlobalPeerAnalysis,
+    PeerCandidate,
+    PeerComparison,
+    PeerStrength,
+)
 from k_market_ai.rag.application.disclosure_insight import DisclosureInsight
 from k_market_ai.rag.domain.models import Citation, RagAnswer
 from k_market_ai.tax.service import (
@@ -318,6 +324,32 @@ def test_tax_document_endpoint_requires_token_and_returns_structured_verificatio
     assert service.safety_identifier == "c" * 64
 
 
+def test_global_peer_endpoint_requires_token_and_returns_grounded_comparison() -> None:
+    service_token = str(uuid4())
+    service = FakeGlobalPeerService()
+    app = create_app(
+        Settings(
+            environment="test",
+            allowed_hosts=["testserver"],
+            service_token=service_token,
+        ),
+        global_peer_service=service,
+    )
+
+    with TestClient(app) as client:
+        missing = client.post("/internal/v1/peers/005930", json={"safety_identifier": "d" * 64})
+        generated = client.post(
+            "/internal/v1/peers/005930",
+            headers={"authorization": f"Bearer {service_token}"},
+            json={"safety_identifier": "d" * 64},
+        )
+
+    assert missing.status_code == 401
+    assert generated.status_code == 200
+    assert generated.json()["primary_peer"]["ticker"] == "INTC"
+    assert service.safety_identifier == "d" * 64
+
+
 class FakeRagHandler:
     def __init__(self, citation: Citation) -> None:
         self._citation = citation
@@ -493,6 +525,65 @@ class FakeTaxDocumentService:
             manual_review_required=False,
             model="test-tax-model",
             prompt_version="tax-document-test-v1",
+        )
+
+
+class FakeGlobalPeerService:
+    def __init__(self) -> None:
+        self.safety_identifier: str | None = None
+
+    async def analyze(self, stock_code: str, safety_identifier: str) -> GlobalPeerAnalysis:
+        self.safety_identifier = safety_identifier
+        assert stock_code == "005930"
+        peer = PeerCandidate(
+            dimension="overall_business",
+            rank=1,
+            ticker="INTC",
+            company_name="Intel",
+            exchange="NASDAQ",
+            country="US",
+            similarity_score=0.52,
+            business_tags=("semiconductors",),
+            sector="Information Technology",
+            industry="Semiconductors",
+            business_model="Integrated semiconductor design and manufacturing",
+            scale_bucket="MEGA_CAP",
+            fiscal_year=2025,
+            market_cap_usd=658_355_740_000,
+            revenue_usd=52_853_000_000,
+            operating_income_usd=-2_214_000_000,
+            net_income_usd=26_000_000,
+            financial_data_source="SEC_COMPANYFACTS",
+            financial_similarity_score=0.776,
+        )
+        return GlobalPeerAnalysis(
+            stock_code="005930",
+            stock_name="삼성전자",
+            stock_name_en="Samsung Electronics",
+            market="KOSPI",
+            target_sector="Information Technology",
+            target_industry="Semiconductors",
+            target_business_model="Consumer electronics and appliance manufacturing",
+            headline="Samsung Electronics and its closest global peers",
+            summary="Intel is the closest supplied reference.",
+            primary_peer=peer,
+            peers=(peer,),
+            comparisons=(
+                PeerComparison(dimension="overall_business", description="Reference.", peer=peer),
+            ),
+            key_strengths=(
+                PeerStrength(title="AI", description="AI capability.", icon_key="ai"),
+                PeerStrength(title="Devices", description="Devices.", icon_key="devices"),
+                PeerStrength(title="Foundry", description="Foundry.", icon_key="foundry"),
+                PeerStrength(title="Memory", description="Memory.", icon_key="memory"),
+            ),
+            confidence_score=0.52,
+            confidence_level="MEDIUM",
+            financial_data_as_of="2025-12-31",
+            ranker_model_version="ranker-test-v1",
+            narrative_model="peer-test-model",
+            prompt_version="peer-test-v1",
+            source="TEST",
         )
 
 

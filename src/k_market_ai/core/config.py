@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     agent_prompt_version: str = "market-agent-v1"
     tax_document_model: str = "gpt-5-mini"
     tax_document_prompt_version: str = "tax-document-v1"
+    peer_model: str = "gpt-5-mini"
+    peer_prompt_version: str = "global-peer-narrative-v1"
 
     @property
     def docs_enabled(self) -> bool:
