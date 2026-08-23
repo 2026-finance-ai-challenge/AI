@@ -1,8 +1,8 @@
 # K-Market-Navigator AI
 
-한국 상장기업 공시를 구조화하고 벡터 검색하여 근거가 표시된 답변을 생성하는 FastAPI 기반 공시 RAG 서비스다.
+한국 상장기업 공시를 구조화하고 벡터 검색하며 뉴스·공시·시장 Agent·세무 문서·글로벌 피어의 생성형 분석을 담당하는 FastAPI 서비스다.
 
-현재 구현 범위는 공시 파싱·청킹·임베딩·검색과 공시 전용 질의응답으로 제한한다.
+모든 생성형 호출은 OpenAI Responses API의 구조화 출력으로 검증하며 Backend 전용 서비스 토큰이 없는 요청은 차단한다.
 
 ## 프로젝트 문서
 
@@ -127,7 +127,15 @@ uv run k-market-rag-worker
 
 API 서버와 공시 색인 워커는 별도 프로세스로 실행한다. 상태 확인은 `GET /health`를 사용한다. 운영 환경에서는 API 문서가 비활성화된다.
 
-공시 질의응답 API를 활성화하려면 `KMARKET_AI_DATABASE_URL`, `KMARKET_AI_SERVICE_TOKEN`, `OPENAI_API_KEY`가 모두 필요하다. API 서버가 질문을 처리하고, 색인 워커는 DB 작업 큐만 처리하므로 챗봇을 사용하려면 두 프로세스를 각각 실행해야 한다. Backend와 AI의 `KMARKET_AI_SERVICE_TOKEN` 값은 같아야 한다.
+Backend 전용 내부 API 범위는 다음과 같다.
+
+- 뉴스 분석·번역과 금융 용어 해설
+- 공시 What/Why/Impact 요약과 공시별 RAG 답변
+- 서버 조회 도구 결과에 고정된 범용 시장 Agent 답변
+- 세무 문서 OCR·필드·일관성 검증
+- 검증 참고 카탈로그 기반 글로벌 피어 비교
+
+생성형 분석과 공시 질의응답을 활성화하려면 `KMARKET_AI_DATABASE_URL`, `KMARKET_AI_SERVICE_TOKEN`, `OPENAI_API_KEY`가 모두 필요하다. API 서버가 생성 요청을 처리하고, 색인 워커는 DB 작업 큐만 처리하므로 공시 RAG를 사용하려면 두 프로세스를 각각 실행해야 한다. Backend와 AI의 `KMARKET_AI_SERVICE_TOKEN` 값은 같아야 한다.
 
 ## 검증
 
