@@ -47,3 +47,6 @@ jobs:
 
       - name: 테스트
         run: uv run pytest
+
+      - name: AI 이미지 빌드
+        run: docker build --tag kmarket-ai:ci .
