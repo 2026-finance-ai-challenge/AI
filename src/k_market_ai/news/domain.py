@@ -34,6 +34,8 @@ class NewsAnalysis:
     sentiment: NewsSentiment
     importance: NewsImportance
     market_impact: MarketImpact
+    market_impact_importance: NewsImportance
+    market_impact_score: float
     event_confidence: float
     sentiment_confidence: float
     importance_confidence: float

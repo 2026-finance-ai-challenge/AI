@@ -39,9 +39,10 @@ def create_app(
             runtime = ApiRagRuntime.create(app_settings)
             await runtime.open()
             app.state.rag_handler = runtime.handler
-        if news_service is None and app_settings.news_configured:
+        if app_settings.openai_configured:
             news_runtime = NewsRuntime.create(app_settings)
-            app.state.news_service = news_runtime.service
+            if news_service is None and news_runtime.service is not None:
+                app.state.news_service = news_runtime.service
             if disclosure_insight_service is None:
                 app.state.disclosure_insight_service = DisclosureInsightService(
                     news_runtime.openai,

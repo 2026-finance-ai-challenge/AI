@@ -4,6 +4,10 @@
 
 모든 생성형 호출은 OpenAI Responses API의 구조화 출력으로 검증하며 Backend 전용 서비스 토큰이 없는 요청은 차단한다.
 
+뉴스 분석은 생성과 분류를 분리한다. 번역과 What/Why/Impact만 OpenAI API가 생성하며, 이벤트·감성·의미 중요도는 하나금융 프로젝트의 승인된 금융 NLP 모델, 시장영향 중요도는 배포 gate를 통과한 K-FNSPID 모델이 계산한다. 하나금융 모델 디렉터리는 읽기 전용으로 마운트하고 허용 Git commit과 핵심 파일 SHA-256이 모두 일치할 때만 로드한다. 검증 실패 시 OpenAI가 분류값을 대신 생성하지 않고 요청을 거절한다.
+
+하나금융의 KF-DeBERTa v6 감성 후보는 현재 공식 평가 결과가 `KEEP_CURRENT_MODEL`이므로 강제 활성화하지 않는다. 배포 gate가 승인되는 별도 릴리스가 나오기 전까지 하나금융 운영 정책과 동일하게 승인된 현행 모델을 사용한다.
+
 ## 프로젝트 문서
 
 - [제품 범위](docs/PRODUCT_SCOPE.md)
@@ -136,6 +140,8 @@ Backend 전용 내부 API 범위는 다음과 같다.
 - 검증 참고 카탈로그 기반 글로벌 피어 비교
 
 생성형 분석과 공시 질의응답을 활성화하려면 `KMARKET_AI_DATABASE_URL`, `KMARKET_AI_SERVICE_TOKEN`, `OPENAI_API_KEY`가 모두 필요하다. API 서버가 생성 요청을 처리하고, 색인 워커는 DB 작업 큐만 처리하므로 공시 RAG를 사용하려면 두 프로세스를 각각 실행해야 한다. Backend와 AI의 `KMARKET_AI_SERVICE_TOKEN` 값은 같아야 한다.
+
+뉴스 분류까지 활성화하려면 검증된 하나금융 저장소를 `KMARKET_AI_HANA_PROJECT_ROOT`에 읽기 전용으로 마운트해야 한다. 기본 허용 revision은 `ab82ccc51cb096872f9a110a85c027a4158a147f`이며 `KMARKET_AI_HANA_EXPECTED_COMMIT`으로 명시한다. 저장소 또는 모델 파일이 다르면 뉴스 분석만 fail-closed 처리되고 생성 모델로 대체하지 않는다.
 
 ## 검증
 

@@ -2,7 +2,13 @@ import asyncio
 from types import SimpleNamespace
 
 from k_market_ai.core.config import Settings
-from k_market_ai.news.domain import TermEvidence
+from k_market_ai.news.classifier import NewsSignals
+from k_market_ai.news.domain import (
+    MarketImpact,
+    NewsImportance,
+    NewsSentiment,
+    TermEvidence,
+)
 from k_market_ai.news.service import NewsIntelligenceService
 
 
@@ -11,6 +17,7 @@ def test_news_analysis_uses_structured_response_without_storage() -> None:
     service = NewsIntelligenceService(
         SimpleNamespace(responses=responses),
         Settings(environment="test", news_model="test-news-model"),
+        FakeClassifier(),
     )
 
     result = asyncio.run(
@@ -26,7 +33,11 @@ def test_news_analysis_uses_structured_response_without_storage() -> None:
         "Samsung Electronics unveiled a new product.",
         "The company expects demand to increase.",
     )
-    assert result.model == "test-news-model"
+    assert result.model == "test-news-model+hana-test-v1"
+    assert result.event_type == "PRODUCT_LAUNCH"
+    assert result.importance == NewsImportance.HIGH
+    assert result.market_impact_importance == NewsImportance.MEDIUM
+    assert result.market_impact_score == 0.55
     assert responses.arguments["store"] is False
     assert "삼성전자가 신제품을 공개했다." in str(responses.arguments["input"])
 
@@ -36,6 +47,7 @@ def test_term_explanation_passes_hashed_safety_identifier_and_evidence() -> None
     service = NewsIntelligenceService(
         SimpleNamespace(responses=responses),
         Settings(environment="test", term_prompt_version="term-test-v2"),
+        FakeClassifier(),
     )
     safety_identifier = "a" * 64
 
@@ -100,3 +112,28 @@ class FakeResponses:
                 refusal_reason=None,
             )
         return SimpleNamespace(output_parsed=parsed)
+
+
+class FakeClassifier:
+    def classify(
+        self,
+        title: str,
+        paragraphs: tuple[str, ...],
+        candidate_companies: tuple[str, ...],
+    ) -> NewsSignals:
+        assert title
+        assert paragraphs
+        del candidate_companies
+        return NewsSignals(
+            event_type="PRODUCT_LAUNCH",
+            sentiment=NewsSentiment.POSITIVE,
+            importance=NewsImportance.HIGH,
+            market_impact=MarketImpact.POSITIVE,
+            event_confidence=0.91,
+            sentiment_confidence=0.89,
+            importance_confidence=0.82,
+            market_impact_confidence=0.78,
+            market_impact_level=NewsImportance.MEDIUM,
+            market_impact_score=0.55,
+            model_version="hana-test-v1",
+        )
