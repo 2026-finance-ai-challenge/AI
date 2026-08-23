@@ -3,6 +3,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Query
 from fastapi.testclient import TestClient
 
+from k_market_ai.agent.service import AgentAnswer
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
 from k_market_ai.main import create_app
@@ -233,6 +234,49 @@ def test_disclosure_insight_endpoint_requires_token_and_returns_citations() -> N
     assert service.receipt_number == "20260823800001"
 
 
+def test_market_agent_endpoint_requires_token_and_returns_structured_answer() -> None:
+    service_token = str(uuid4())
+    service = FakeMarketAgentService()
+    app = create_app(
+        Settings(
+            environment="test",
+            allowed_hosts=["testserver"],
+            service_token=service_token,
+        ),
+        agent_service=service,
+    )
+    request_body = {
+        "context_type": "STOCK",
+        "context_title": "Samsung Electronics",
+        "question": "What is the observed price?",
+        "history": [],
+        "evidence": [
+            {
+                "id": "E1",
+                "title": "Observed quote",
+                "content": "KRW 78,000",
+                "source": "KIS",
+                "as_of": "2026-08-23T01:00:00Z",
+            }
+        ],
+        "safety_identifier": "b" * 64,
+    }
+
+    with TestClient(app) as client:
+        missing = client.post("/internal/v1/agent/answers", json=request_body)
+        generated = client.post(
+            "/internal/v1/agent/answers",
+            headers={"authorization": f"Bearer {service_token}"},
+            json=request_body,
+        )
+
+    assert missing.status_code == 401
+    assert generated.status_code == 200
+    assert generated.json()["evidence_ids"] == ["E1"]
+    assert generated.json()["insufficient_evidence"] is False
+    assert service.safety_identifier == "b" * 64
+
+
 class FakeRagHandler:
     def __init__(self, citation: Citation) -> None:
         self._citation = citation
@@ -330,6 +374,38 @@ class FakeDisclosureInsightService:
             refusal_reason=None,
             model="test-model",
             prompt_version="filing-summary-test-v1",
+        )
+
+
+class FakeMarketAgentService:
+    def __init__(self) -> None:
+        self.safety_identifier: str | None = None
+
+    async def answer(
+        self,
+        context_type: str,
+        context_title: str,
+        question: str,
+        history: tuple[object, ...],
+        evidence: tuple[object, ...],
+        safety_identifier: str,
+    ) -> AgentAnswer:
+        self.safety_identifier = safety_identifier
+        assert context_type == "STOCK"
+        assert context_title == "Samsung Electronics"
+        assert question == "What is the observed price?"
+        assert history == ()
+        assert len(evidence) == 1
+        return AgentAnswer(
+            answer="The latest supplied quote is KRW 78,000. [E1]",
+            evidence_ids=("E1",),
+            insufficient_evidence=False,
+            refusal_reason=None,
+            suggested_room_name="Samsung latest quote",
+            disclaimer="For information only.",
+            confidence=0.95,
+            model="test-agent",
+            prompt_version="market-agent-test-v1",
         )
 
 

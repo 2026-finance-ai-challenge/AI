@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from k_market_ai.agent.service import MarketAgentService
 from k_market_ai.api.router import api_router
 from k_market_ai.core.config import Settings, get_settings
 from k_market_ai.core.exception_handlers import register_exception_handlers
@@ -20,6 +21,7 @@ def create_app(
     rag_handler: AskDisclosureHandler | None = None,
     news_service: NewsIntelligenceService | None = None,
     disclosure_insight_service: DisclosureInsightService | None = None,
+    agent_service: MarketAgentService | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     docs_url = "/docs" if app_settings.docs_enabled else None
@@ -41,6 +43,8 @@ def create_app(
                     news_runtime.openai,
                     app_settings,
                 )
+            if agent_service is None:
+                app.state.agent_service = MarketAgentService(news_runtime.openai, app_settings)
         try:
             yield
         finally:
@@ -62,6 +66,7 @@ def create_app(
     app.state.rag_handler = rag_handler
     app.state.news_service = news_service
     app.state.disclosure_insight_service = disclosure_insight_service
+    app.state.agent_service = agent_service
     register_exception_handlers(app)
     app.include_router(api_router)
     return app
