@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     service_token: SecretStr | None = None
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    news_model: str = "gpt-5-mini"
+    news_prompt_version: str = "news-intelligence-v1"
+    term_prompt_version: str = "financial-term-v1"
 
     @property
     def docs_enabled(self) -> bool:
@@ -27,6 +30,10 @@ class Settings(BaseSettings):
     @property
     def api_rag_configured(self) -> bool:
         return all((self.database_url, self.service_token, self.openai_api_key))
+
+    @property
+    def news_configured(self) -> bool:
+        return all((self.service_token, self.openai_api_key))
 
 
 @lru_cache

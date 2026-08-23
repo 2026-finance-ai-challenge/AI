@@ -1,18 +1,15 @@
-import secrets
 from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
-from k_market_ai.core.config import Settings
+from k_market_ai.api.internal_auth import authenticate_internal
 from k_market_ai.core.errors import AppError
 from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
 from k_market_ai.rag.domain.models import SelectedContext
 
 router = APIRouter(prefix="/internal/v1/disclosures", tags=["disclosure-rag"])
-bearer = HTTPBearer(auto_error=False)
 
 
 class SelectedContextRequest(BaseModel):
@@ -50,25 +47,6 @@ class DisclosureAnswerResponse(BaseModel):
     prompt_version: str
 
 
-async def _authenticate(
-    request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
-) -> None:
-    settings: Settings = request.app.state.settings
-    expected = settings.service_token
-    if expected is None:
-        raise AppError(
-            code="RAG_NOT_CONFIGURED",
-            message="The RAG service is not configured.",
-            status_code=503,
-        )
-    if credentials is None or not secrets.compare_digest(
-        credentials.credentials,
-        expected.get_secret_value(),
-    ):
-        raise AppError(code="UNAUTHORIZED", message="Authentication is required.", status_code=401)
-
-
 @router.post(
     "/{receipt_number}/questions",
     response_model=DisclosureAnswerResponse,
@@ -77,7 +55,7 @@ async def ask_disclosure(
     request: Request,
     body: DisclosureQuestionRequest,
     receipt_number: Annotated[str, Path(pattern=r"^[0-9]{14}$")],
-    _: Annotated[None, Depends(_authenticate)],
+    _: Annotated[None, Depends(authenticate_internal)],
 ) -> DisclosureAnswerResponse:
     handler = _handler(request)
     selected = (

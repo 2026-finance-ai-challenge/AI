@@ -6,6 +6,13 @@ from fastapi.testclient import TestClient
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
 from k_market_ai.main import create_app
+from k_market_ai.news.domain import (
+    MarketImpact,
+    NewsAnalysis,
+    NewsImportance,
+    NewsSentiment,
+    TermExplanation,
+)
 from k_market_ai.rag.domain.models import Citation, RagAnswer
 
 
@@ -151,6 +158,48 @@ def test_rag_endpoint_returns_english_answer_with_source_reference() -> None:
     assert handler.receipt_number == "20260818800670"
 
 
+def test_news_endpoints_require_service_token_and_return_structured_results() -> None:
+    service_token = str(uuid4())
+    service = FakeNewsService()
+    app = create_app(
+        Settings(
+            environment="test",
+            allowed_hosts=["testserver"],
+            service_token=service_token,
+        ),
+        news_service=service,
+    )
+
+    with TestClient(app) as client:
+        missing = client.post(
+            "/internal/v1/news/analysis",
+            json={"title": "제목", "paragraphs": ["본문"]},
+        )
+        analyzed = client.post(
+            "/internal/v1/news/analysis",
+            headers={"authorization": f"Bearer {service_token}"},
+            json={"title": "제목", "paragraphs": ["본문"]},
+        )
+        explained = client.post(
+            "/internal/v1/news/terms/explanations",
+            headers={"authorization": f"Bearer {service_token}"},
+            json={
+                "selected_text": "유상증자",
+                "article_context": "유상증자를 결정했다.",
+                "evidence": [],
+                "safety_identifier": "a" * 64,
+            },
+        )
+
+    assert missing.status_code == 401
+    assert analyzed.status_code == 200
+    assert analyzed.json()["sentiment"] == "NEUTRAL"
+    assert analyzed.json()["what"] == "A company announcement was reported."
+    assert explained.status_code == 200
+    assert explained.json()["sufficient_evidence"] is False
+    assert service.safety_identifier == "a" * 64
+
+
 class FakeRagHandler:
     def __init__(self, citation: Citation) -> None:
         self._citation = citation
@@ -165,6 +214,62 @@ class FakeRagHandler:
             refused=False,
             refusal_reason=None,
             citations=(self._citation,),
+            model="test-model",
+            prompt_version="test-prompt",
+        )
+
+
+class FakeNewsService:
+    def __init__(self) -> None:
+        self.safety_identifier: str | None = None
+
+    async def analyze(
+        self,
+        title: str,
+        paragraphs: tuple[str, ...],
+        candidate_companies: tuple[str, ...],
+    ) -> NewsAnalysis:
+        assert title == "제목"
+        assert paragraphs == ("본문",)
+        assert candidate_companies == ()
+        return NewsAnalysis(
+            english_title="Headline",
+            translated_paragraphs=("Body",),
+            what="A company announcement was reported.",
+            why="The source does not state a reason.",
+            impact="No impact is stated in the source.",
+            event_type="COMPANY_UPDATE",
+            sentiment=NewsSentiment.NEUTRAL,
+            importance=NewsImportance.LOW,
+            market_impact=MarketImpact.UNCERTAIN,
+            event_confidence=0.8,
+            sentiment_confidence=0.8,
+            importance_confidence=0.7,
+            market_impact_confidence=0.6,
+            model="test-model",
+            prompt_version="test-prompt",
+        )
+
+    async def explain_term(
+        self,
+        selected_text: str,
+        article_context: str,
+        evidence: tuple[object, ...],
+        safety_identifier: str | None,
+    ) -> TermExplanation:
+        self.safety_identifier = safety_identifier
+        assert selected_text == "유상증자"
+        assert article_context == "유상증자를 결정했다."
+        assert evidence == ()
+        return TermExplanation(
+            normalized_term=None,
+            definition=None,
+            contextual_meaning=None,
+            evidence_ids=(),
+            confidence=0.1,
+            review_required=True,
+            sufficient_evidence=False,
+            refusal_reason="The supplied context is insufficient.",
             model="test-model",
             prompt_version="test-prompt",
         )
