@@ -207,6 +207,8 @@ def test_news_endpoints_require_service_token_and_return_structured_results() ->
     assert missing.status_code == 401
     assert analyzed.status_code == 200
     assert analyzed.json()["sentiment"] == "NEUTRAL"
+    assert analyzed.json()["market_impact_importance"] == "LOW"
+    assert analyzed.json()["market_impact_score"] == 0.2
     assert analyzed.json()["what"] == "A company announcement was reported."
     assert explained.status_code == 200
     assert explained.json()["sufficient_evidence"] is False
@@ -392,6 +394,8 @@ class FakeNewsService:
             sentiment=NewsSentiment.NEUTRAL,
             importance=NewsImportance.LOW,
             market_impact=MarketImpact.UNCERTAIN,
+            market_impact_importance=NewsImportance.LOW,
+            market_impact_score=0.2,
             event_confidence=0.8,
             sentiment_confidence=0.8,
             importance_confidence=0.7,

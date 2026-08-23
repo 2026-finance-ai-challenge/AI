@@ -29,6 +29,8 @@ class NewsAnalysisResponse(BaseModel):
     sentiment: str
     importance: str
     market_impact: str
+    market_impact_importance: str
+    market_impact_score: float = Field(ge=0, le=1)
     event_confidence: float
     sentiment_confidence: float
     importance_confidence: float
@@ -89,6 +91,8 @@ async def analyze_news(
         sentiment=result.sentiment,
         importance=result.importance,
         market_impact=result.market_impact,
+        market_impact_importance=result.market_impact_importance,
+        market_impact_score=result.market_impact_score,
         event_confidence=result.event_confidence,
         sentiment_confidence=result.sentiment_confidence,
         importance_confidence=result.importance_confidence,
