@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     filing_summary_prompt_version: str = "filing-summary-v1"
     agent_model: str = "gpt-5-mini"
     agent_prompt_version: str = "market-agent-v1"
+    tax_document_model: str = "gpt-5-mini"
+    tax_document_prompt_version: str = "tax-document-v1"
 
     @property
     def docs_enabled(self) -> bool:

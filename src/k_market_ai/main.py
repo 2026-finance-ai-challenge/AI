@@ -14,6 +14,7 @@ from k_market_ai.news.service import NewsIntelligenceService
 from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
 from k_market_ai.rag.application.disclosure_insight import DisclosureInsightService
 from k_market_ai.rag.infrastructure.runtime import ApiRagRuntime
+from k_market_ai.tax.service import TaxDocumentService
 
 
 def create_app(
@@ -22,6 +23,7 @@ def create_app(
     news_service: NewsIntelligenceService | None = None,
     disclosure_insight_service: DisclosureInsightService | None = None,
     agent_service: MarketAgentService | None = None,
+    tax_document_service: TaxDocumentService | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     docs_url = "/docs" if app_settings.docs_enabled else None
@@ -45,6 +47,10 @@ def create_app(
                 )
             if agent_service is None:
                 app.state.agent_service = MarketAgentService(news_runtime.openai, app_settings)
+            if tax_document_service is None:
+                app.state.tax_document_service = TaxDocumentService(
+                    news_runtime.openai, app_settings
+                )
         try:
             yield
         finally:
@@ -67,6 +73,7 @@ def create_app(
     app.state.news_service = news_service
     app.state.disclosure_insight_service = disclosure_insight_service
     app.state.agent_service = agent_service
+    app.state.tax_document_service = tax_document_service
     register_exception_handlers(app)
     app.include_router(api_router)
     return app

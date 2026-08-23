@@ -16,6 +16,11 @@ from k_market_ai.news.domain import (
 )
 from k_market_ai.rag.application.disclosure_insight import DisclosureInsight
 from k_market_ai.rag.domain.models import Citation, RagAnswer
+from k_market_ai.tax.service import (
+    TaxDocumentFields,
+    TaxDocumentIssue,
+    TaxVerificationResult,
+)
 
 
 def test_health() -> None:
@@ -277,6 +282,42 @@ def test_market_agent_endpoint_requires_token_and_returns_structured_answer() ->
     assert service.safety_identifier == "b" * 64
 
 
+def test_tax_document_endpoint_requires_token_and_returns_structured_verification() -> None:
+    service_token = str(uuid4())
+    service = FakeTaxDocumentService()
+    app = create_app(
+        Settings(
+            environment="test",
+            allowed_hosts=["testserver"],
+            service_token=service_token,
+        ),
+        tax_document_service=service,
+    )
+    request_body = {
+        "document_type": "RESIDENCY_CERTIFICATE",
+        "file_name": "certificate.pdf",
+        "content_type": "application/pdf",
+        "document_base64": "JVBERi0xLjcKJSVFT0Y=",
+        "expected_residency_country": "US",
+        "investor_type": "INDIVIDUAL",
+        "safety_identifier": "c" * 64,
+    }
+
+    with TestClient(app) as client:
+        missing = client.post("/internal/v1/tax/documents/verify", json=request_body)
+        verified = client.post(
+            "/internal/v1/tax/documents/verify",
+            headers={"authorization": f"Bearer {service_token}"},
+            json=request_body,
+        )
+
+    assert missing.status_code == 401
+    assert verified.status_code == 200
+    assert verified.json()["verification_status"] == "VERIFIED"
+    assert verified.json()["fields"]["residency_country"] == "US"
+    assert service.safety_identifier == "c" * 64
+
+
 class FakeRagHandler:
     def __init__(self, citation: Citation) -> None:
         self._citation = citation
@@ -406,6 +447,52 @@ class FakeMarketAgentService:
             confidence=0.95,
             model="test-agent",
             prompt_version="market-agent-test-v1",
+        )
+
+
+class FakeTaxDocumentService:
+    def __init__(self) -> None:
+        self.safety_identifier: str | None = None
+
+    async def verify(
+        self,
+        document_type: str,
+        file_name: str,
+        content_type: str,
+        document_base64: str,
+        expected_residency_country: str,
+        investor_type: str,
+        safety_identifier: str,
+    ) -> TaxVerificationResult:
+        self.safety_identifier = safety_identifier
+        assert document_type == "RESIDENCY_CERTIFICATE"
+        assert file_name == "certificate.pdf"
+        assert content_type == "application/pdf"
+        assert document_base64 == "JVBERi0xLjcKJSVFT0Y="
+        assert expected_residency_country == "US"
+        assert investor_type == "INDIVIDUAL"
+        return TaxVerificationResult(
+            detected_document_type="RESIDENCY_CERTIFICATE",
+            verification_status="VERIFIED",
+            fields=TaxDocumentFields(
+                holder_name="Jane Investor",
+                residency_country="US",
+                issue_date="2026-01-10",
+                issuing_authority="IRS",
+            ),
+            missing_required_fields=(),
+            issues=(
+                TaxDocumentIssue(
+                    code="AUTHENTICITY_NOT_CONFIRMED",
+                    severity="INFO",
+                    message="Screening only.",
+                ),
+            ),
+            ocr_confidence=0.97,
+            tamper_risk=0.02,
+            manual_review_required=False,
+            model="test-tax-model",
+            prompt_version="tax-document-test-v1",
         )
 
 
