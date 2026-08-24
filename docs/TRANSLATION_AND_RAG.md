@@ -1,6 +1,6 @@
 # 번역 생성과 다국어 공시 RAG 기준
 
-- 상태: 설계 기준 확정, 구현 예정
+- 상태: AI 구조화 생성 API 구현 완료, Backend 영속 캐시 연동 진행 중
 - 기준일: 2026-08-24
 - 원문 언어: 한국어
 - 출력 언어: 영어
@@ -33,7 +33,9 @@ AI 서비스는 데이터가 수집될 때마다 본문 전체를 번역하지 �
 
 각 번역 요청에는 Backend가 계산한 `source_hash`, `target_locale`, `translation_version`을 포함한다. AI 응답은 동일 값, `model`, `prompt_version`과 구조화 결과를 반환한다. AI 서비스는 요청의 원문 해시를 다시 계산해 불일치 요청을 거절한다.
 
-현재 `/internal/v1/news/analysis`는 제목·검색 요약 번역과 What/Why/Impact를 한 요청에서 생성한다. 구현 단계에서 분류 입력, 제목 번역, 온디맨드 Narrative 생성을 분리하고 호환 기간 뒤 기존 계약을 제거한다.
+뉴스 수집용 분류는 `/internal/v1/news/signals`, 제목 생성은 `/internal/v1/translations/titles`, 본문·Insight 생성은 `/internal/v1/news/narratives`로 분리했다. 기존 `/internal/v1/news/analysis`는 호환 기간에만 유지하며 Backend 전환 뒤 제거한다.
+
+뉴스 원문 해시는 제목·문단·전문 제공 상태를 키 정렬·공백 없는 UTF-8 JSON으로 직렬화해 계산한다. 공시 섹션 원문 해시는 heading·text·table JSON 문자열을 같은 방식으로 직렬화해 계산한다. AI 서비스는 해시를 다시 계산하고, 공시 표의 객체 키·배열 길이·비문자 값이 바뀐 결과를 저장 전에 거절한다.
 
 ## 공시 RAG 언어 흐름
 

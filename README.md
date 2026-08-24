@@ -136,7 +136,11 @@ API 서버와 공시 색인 워커는 별도 프로세스로 실행한다. 상�
 
 Backend 전용 내부 API 범위는 다음과 같다.
 
-- 고유 제목 배치 번역, 온디맨드 뉴스·공시 번역과 금융 용어 해설
+- `POST /internal/v1/translations/titles`: 원문 해시가 고정된 고유 제목 배치 번역
+- `POST /internal/v1/news/signals`: 생성 모델을 호출하지 않는 뉴스 분류
+- `POST /internal/v1/news/narratives`: 전문·검색 요약 상태를 보존하는 온디맨드 번역·Insight
+- `POST /internal/v1/disclosures/section-translations`: 문서 버전·섹션에 고정된 구조 보존 번역
+- `POST /internal/v1/news/terms/explanations`: 검증 근거 기반 금융 용어 해설
 - 공시 What/Why/Impact 요약과 공시별 RAG 답변
 - 서버 조회 도구 결과에 고정된 범용 시장 Agent 답변
 - 세무 문서 OCR·필드·일관성 검증
