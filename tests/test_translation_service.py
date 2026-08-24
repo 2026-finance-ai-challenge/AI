@@ -1,0 +1,160 @@
+import asyncio
+import hashlib
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from k_market_ai.core.config import Settings
+from k_market_ai.core.errors import AppError
+from k_market_ai.translations.domain import TitleSource
+from k_market_ai.translations.service import (
+    TranslationService,
+    canonical_disclosure_section,
+    canonical_news_source,
+)
+
+
+def test_title_batch_validates_hashes_and_restores_input_order() -> None:
+    first = _title("T1", "삼성전자 신제품 공개")
+    second = _title("T2", "유상증자 결정")
+    parsed = SimpleNamespace(
+        items=(
+            SimpleNamespace(
+                id="T2",
+                source_hash=second.source_hash,
+                translated_text="Decision on Capital Increase with Consideration",
+            ),
+            SimpleNamespace(
+                id="T1",
+                source_hash=first.source_hash,
+                translated_text="Samsung Electronics Unveils New Product",
+            ),
+        )
+    )
+    responses = FakeResponses(parsed)
+    service = _service(responses)
+
+    result = asyncio.run(service.translate_titles((first, second), "en", "title-v1"))
+
+    assert [item.id for item in result.items] == ["T1", "T2"]
+    assert result.items[0].translated_text == "Samsung Electronics Unveils New Product"
+    assert responses.arguments["store"] is False
+
+
+def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
+    source = _title("T1", "공시 제목")
+    responses = FakeResponses(SimpleNamespace(items=()))
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+
+    assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
+def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
+    title = "실적 발표"
+    paragraphs = ("매출이 증가했다.", "회사는 해외 수요를 언급했다.")
+    source_hash = _hash(canonical_news_source(title, paragraphs, "SOURCE_EXCERPT"))
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_paragraphs=(
+                "Revenue increased.",
+                "The company cited overseas demand.",
+            ),
+            what="Revenue increased.",
+            why="The company cited overseas demand.",
+            impact="The excerpt does not state an impact.",
+        )
+    )
+
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash,
+            title,
+            paragraphs,
+            "SOURCE_EXCERPT",
+            "en",
+            "news-v1",
+        )
+    )
+
+    assert result.content_availability == "SOURCE_EXCERPT"
+    assert len(result.translated_paragraphs) == len(paragraphs)
+
+
+def test_disclosure_section_rejects_changed_table_structure() -> None:
+    table = json.dumps({"rows": [["매출", 100]]}, ensure_ascii=False)
+    source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_heading="Financial Information",
+            translated_text="Revenue status",
+            translated_table_data_json=json.dumps({"rows": [["Revenue", 101]]}),
+        )
+    )
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_disclosure_section(
+                source_hash,
+                "재무 정보",
+                "매출 현황",
+                table,
+                "en",
+                "section-v1",
+            )
+        )
+
+    assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
+def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None:
+    table = json.dumps({"rows": [["매출", 100, True, None]]}, ensure_ascii=False)
+    source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
+    translated_table = json.dumps({"rows": [["Revenue", 100, True, None]]})
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_heading="Financial Information",
+            translated_text="Revenue status",
+            translated_table_data_json=translated_table,
+        )
+    )
+
+    result = asyncio.run(
+        _service(responses).translate_disclosure_section(
+            source_hash,
+            "재무 정보",
+            "매출 현황",
+            table,
+            "en",
+            "section-v1",
+        )
+    )
+
+    assert result.translated_table_data_json == translated_table
+
+
+class FakeResponses:
+    def __init__(self, parsed: object) -> None:
+        self.parsed = parsed
+        self.arguments: dict[str, object] = {}
+
+    async def parse(self, **arguments: object) -> SimpleNamespace:
+        self.arguments = arguments
+        return SimpleNamespace(output_parsed=self.parsed)
+
+
+def _service(responses: FakeResponses) -> TranslationService:
+    return TranslationService(
+        SimpleNamespace(responses=responses),
+        Settings(environment="test", translation_model="translation-test-model"),
+    )
+
+
+def _title(identifier: str, source_text: str) -> TitleSource:
+    return TitleSource(identifier, _hash(source_text), source_text)
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()

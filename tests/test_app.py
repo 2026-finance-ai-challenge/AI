@@ -7,6 +7,7 @@ from k_market_ai.agent.service import AgentAnswer
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
 from k_market_ai.main import create_app
+from k_market_ai.news.classifier import NewsSignals
 from k_market_ai.news.domain import (
     MarketImpact,
     NewsAnalysis,
@@ -193,6 +194,11 @@ def test_news_endpoints_require_service_token_and_return_structured_results() ->
             headers={"authorization": f"Bearer {service_token}"},
             json={"title": "제목", "paragraphs": ["본문"]},
         )
+        classified = client.post(
+            "/internal/v1/news/signals",
+            headers={"authorization": f"Bearer {service_token}"},
+            json={"title": "제목", "paragraphs": ["본문"]},
+        )
         explained = client.post(
             "/internal/v1/news/terms/explanations",
             headers={"authorization": f"Bearer {service_token}"},
@@ -210,6 +216,8 @@ def test_news_endpoints_require_service_token_and_return_structured_results() ->
     assert analyzed.json()["market_impact_importance"] == "LOW"
     assert analyzed.json()["market_impact_score"] == 0.2
     assert analyzed.json()["what"] == "A company announcement was reported."
+    assert classified.status_code == 200
+    assert classified.json()["model"] == "hana-test-v1"
     assert explained.status_code == 200
     assert explained.json()["sufficient_evidence"] is False
     assert service.safety_identifier == "a" * 64
@@ -374,6 +382,29 @@ class FakeRagHandler:
 class FakeNewsService:
     def __init__(self) -> None:
         self.safety_identifier: str | None = None
+
+    async def classify(
+        self,
+        title: str,
+        paragraphs: tuple[str, ...],
+        candidate_companies: tuple[str, ...],
+    ) -> NewsSignals:
+        assert title == "제목"
+        assert paragraphs == ("본문",)
+        assert candidate_companies == ()
+        return NewsSignals(
+            event_type="COMPANY_UPDATE",
+            sentiment=NewsSentiment.NEUTRAL,
+            importance=NewsImportance.LOW,
+            market_impact=MarketImpact.UNCERTAIN,
+            event_confidence=0.8,
+            sentiment_confidence=0.8,
+            importance_confidence=0.7,
+            market_impact_confidence=0.6,
+            market_impact_level=NewsImportance.LOW,
+            market_impact_score=0.2,
+            model_version="hana-test-v1",
+        )
 
     async def analyze(
         self,
