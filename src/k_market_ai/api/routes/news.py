@@ -39,6 +39,20 @@ class NewsAnalysisResponse(BaseModel):
     prompt_version: str
 
 
+class NewsSignalResponse(BaseModel):
+    event_type: str
+    sentiment: str
+    importance: str
+    market_impact: str
+    market_impact_importance: str
+    market_impact_score: float = Field(ge=0, le=1)
+    event_confidence: float = Field(ge=0, le=1)
+    sentiment_confidence: float = Field(ge=0, le=1)
+    importance_confidence: float = Field(ge=0, le=1)
+    market_impact_confidence: float = Field(ge=0, le=1)
+    model: str
+
+
 class TermEvidenceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -99,6 +113,32 @@ async def analyze_news(
         market_impact_confidence=result.market_impact_confidence,
         model=result.model,
         prompt_version=result.prompt_version,
+    )
+
+
+@router.post("/signals", response_model=NewsSignalResponse)
+async def classify_news(
+    request: Request,
+    body: NewsAnalysisRequest,
+    _: Annotated[None, Depends(authenticate_internal)],
+) -> NewsSignalResponse:
+    result = await _service(request).classify(
+        body.title,
+        body.paragraphs,
+        body.candidate_companies,
+    )
+    return NewsSignalResponse(
+        event_type=result.event_type,
+        sentiment=result.sentiment,
+        importance=result.importance,
+        market_impact=result.market_impact,
+        market_impact_importance=result.market_impact_level,
+        market_impact_score=result.market_impact_score,
+        event_confidence=result.event_confidence,
+        sentiment_confidence=result.sentiment_confidence,
+        importance_confidence=result.importance_confidence,
+        market_impact_confidence=result.market_impact_confidence,
+        model=result.model_version,
     )
 
 

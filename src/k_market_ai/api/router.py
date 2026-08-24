@@ -7,6 +7,7 @@ from k_market_ai.api.routes.health import router as health_router
 from k_market_ai.api.routes.news import router as news_router
 from k_market_ai.api.routes.peers import router as peers_router
 from k_market_ai.api.routes.tax import router as tax_router
+from k_market_ai.api.routes.translations import router as translations_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -16,3 +17,4 @@ api_router.include_router(disclosure_insight_router)
 api_router.include_router(news_router)
 api_router.include_router(peers_router)
 api_router.include_router(tax_router)
+api_router.include_router(translations_router)

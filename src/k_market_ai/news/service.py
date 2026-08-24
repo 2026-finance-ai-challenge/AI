@@ -10,6 +10,7 @@ from k_market_ai.core.errors import AppError
 from k_market_ai.news.classifier import (
     NewsClassifierUnavailable,
     NewsSignalClassifier,
+    NewsSignals,
 )
 from k_market_ai.news.domain import (
     NewsAnalysis,
@@ -71,14 +72,14 @@ class NewsIntelligenceService:
         self._term_prompt_version = settings.term_prompt_version
         self._classifier = classifier
 
-    async def analyze(
+    async def classify(
         self,
         title: str,
         paragraphs: Sequence[str],
         candidate_companies: Sequence[str],
-    ) -> NewsAnalysis:
+    ) -> NewsSignals:
         try:
-            signals = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 self._classifier.classify,
                 title,
                 tuple(paragraphs),
@@ -90,6 +91,14 @@ class NewsIntelligenceService:
                 message="The verified news classifier is temporarily unavailable.",
                 status_code=503,
             ) from exception
+
+    async def analyze(
+        self,
+        title: str,
+        paragraphs: Sequence[str],
+        candidate_companies: Sequence[str],
+    ) -> NewsAnalysis:
+        signals = await self.classify(title, paragraphs, candidate_companies)
         payload = {
             "source_title": title,
             "source_paragraphs": list(paragraphs),
