@@ -23,7 +23,8 @@ class NewsRuntime:
         client = AsyncOpenAI(
             api_key=settings.openai_api_key.get_secret_value(),
             timeout=30.0,
-            max_retries=2,
+            # 작업 큐가 지수 백오프를 담당하므로 SDK 중첩 재시도를 막는다.
+            max_retries=0,
         )
         service = None
         if settings.hana_project_root is not None:

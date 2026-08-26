@@ -40,6 +40,7 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert [item.id for item in result.items] == ["T1", "T2"]
     assert result.items[0].translated_text == "Samsung Electronics Unveils New Product"
     assert responses.arguments["store"] is False
+    assert responses.arguments["timeout"] == 90.0
 
 
 def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
@@ -81,6 +82,7 @@ def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
 
     assert result.content_availability == "SOURCE_EXCERPT"
     assert len(result.translated_paragraphs) == len(paragraphs)
+    assert responses.arguments["timeout"] == 60.0
 
 
 def test_disclosure_section_rejects_changed_table_structure() -> None:
@@ -133,6 +135,7 @@ def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None
     )
 
     assert result.translated_table_data_json == translated_table
+    assert responses.arguments["timeout"] == 90.0
 
 
 class FakeResponses:
