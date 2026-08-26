@@ -1,4 +1,4 @@
-name: AI CI
+name: AI CI/CD
 
 on:
   pull_request:
@@ -10,43 +10,108 @@ permissions:
   contents: read
 
 concurrency:
-  group: ai-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ai-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: 소스 체크아웃
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - name: Python 구성
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.14.4"
-
       - name: uv 구성
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.12"
-
       - name: 의존성 설치
         run: uv sync --locked
-
       - name: 정적 검사
         run: uv run ruff check .
-
       - name: 포맷 검사
         run: uv run ruff format --check .
-
       - name: 타입 검사
         run: uv run mypy
-
       - name: 테스트
         run: uv run pytest
-
       - name: AI 이미지 빌드
         run: docker build --tag kmarket-ai:ci .
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Buildx 구성
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: GHCR 로그인
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: ARM64 이미지 발행
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ai:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/ai:main
+          cache-from: type=gha,scope=ai-arm64
+          cache-to: type=gha,mode=max,scope=ai-arm64
+          provenance: mode=max
+          sbom: true
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: SSH 클라이언트 구성
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_SSH_HOST_KEY: ${{ secrets.PROD_SSH_HOST_KEY }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sshpass
+          install -m 700 -d "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$PROD_SSH_KEY" > "$RUNNER_TEMP/ssh/key"
+          printf '%s\n' "$PROD_SSH_HOST_KEY" > "$RUNNER_TEMP/ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/ssh/key" "$RUNNER_TEMP/ssh/known_hosts"
+      - name: AI 배포
+        env:
+          SSHPASS: ${{ secrets.PROD_SSH_PASSWORD }}
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          SSH_OPTIONS=(-i "$RUNNER_TEMP/ssh/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o PreferredAuthentications=publickey,keyboard-interactive,password)
+          sshpass -e scp "${SSH_OPTIONS[@]}" deploy/deploy-ai.sh "ubuntu@$PROD_HOST:/opt/kmarket/deploy-ai.sh"
+          {
+            printf '%s\n' "$GHCR_USERNAME"
+            printf '%s\n' "$GHCR_TOKEN"
+          } | sshpass -e ssh "${SSH_OPTIONS[@]}" "ubuntu@$PROD_HOST" "IFS= read -r GHCR_USERNAME; IFS= read -r GHCR_TOKEN; export GHCR_USERNAME GHCR_TOKEN; chmod 700 /opt/kmarket/deploy-ai.sh; /opt/kmarket/deploy-ai.sh '$GITHUB_SHA'"
