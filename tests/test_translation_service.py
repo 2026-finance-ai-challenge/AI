@@ -3,7 +3,9 @@ import hashlib
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import APITimeoutError, OpenAIError, RateLimitError
 
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
@@ -51,6 +53,40 @@ def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
         asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
 
     assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
+def test_title_batch_classifies_provider_timeout() -> None:
+    source = _title("T1", "공시 제목")
+    timeout = APITimeoutError(request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(FailingResponses(timeout)).translate_titles((source,), "en", "title-v1")
+        )
+
+    assert captured.value.code == "AI_PROVIDER_TIMEOUT"
+    assert captured.value.status_code == 504
+
+
+def test_title_batch_classifies_exhausted_quota() -> None:
+    source = _title("T1", "공시 제목")
+    response = httpx.Response(
+        429,
+        request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+    )
+    exhausted = RateLimitError(
+        "quota exhausted",
+        response=response,
+        body={"code": "credit_balance_exhausted"},
+    )
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(FailingResponses(exhausted)).translate_titles((source,), "en", "title-v1")
+        )
+
+    assert captured.value.code == "AI_PROVIDER_QUOTA_EXHAUSTED"
+    assert captured.value.status_code == 503
 
 
 def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
@@ -148,7 +184,16 @@ class FakeResponses:
         return SimpleNamespace(output_parsed=self.parsed)
 
 
-def _service(responses: FakeResponses) -> TranslationService:
+class FailingResponses:
+    def __init__(self, exception: OpenAIError) -> None:
+        self.exception = exception
+
+    async def parse(self, **arguments: object) -> SimpleNamespace:
+        del arguments
+        raise self.exception
+
+
+def _service(responses: FakeResponses | FailingResponses) -> TranslationService:
     return TranslationService(
         SimpleNamespace(responses=responses),
         Settings(environment="test", translation_model="translation-test-model"),
