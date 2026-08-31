@@ -187,6 +187,23 @@ def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
     assert responses.arguments["timeout"] == 60.0
 
 
+def test_long_news_narrative_translates_in_bounded_chunks_and_summarizes_once() -> None:
+    title = "장문 기사"
+    paragraphs = ("가" * 10_000, "나" * 10_000, "다" * 2_000)
+    source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
+    responses = ChunkedNewsResponses()
+
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v2"
+        )
+    )
+
+    assert result.translated_paragraphs == tuple(f"EN:{item}" for item in paragraphs)
+    assert responses.summary_calls == 1
+    assert responses.translation_calls == 2
+
+
 def test_disclosure_section_rejects_changed_table_structure() -> None:
     table = json.dumps({"rows": [["매출", 100]]}, ensure_ascii=False)
     source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
@@ -259,7 +276,33 @@ class FailingResponses:
         raise self.exception
 
 
-def _service(responses: FakeResponses | FailingResponses) -> TranslationService:
+class ChunkedNewsResponses:
+    def __init__(self) -> None:
+        self.translation_calls = 0
+        self.summary_calls = 0
+
+    async def parse(self, **arguments: object) -> SimpleNamespace:
+        payload = json.loads(str(arguments["input"]))
+        if "source_excerpt" in payload:
+            self.summary_calls += 1
+            parsed = SimpleNamespace(
+                what="The company announced an update.",
+                why="The source states the reason.",
+                impact="The source describes a potential impact.",
+            )
+        else:
+            self.translation_calls += 1
+            parsed = SimpleNamespace(
+                translated_paragraphs=tuple(
+                    f"EN:{paragraph}" for paragraph in payload["source_paragraphs"]
+                )
+            )
+        return SimpleNamespace(output_parsed=parsed)
+
+
+def _service(
+    responses: FakeResponses | FailingResponses | ChunkedNewsResponses,
+) -> TranslationService:
     return TranslationService(
         SimpleNamespace(responses=responses),
         Settings(environment="test", translation_model="translation-test-model"),
