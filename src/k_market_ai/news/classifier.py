@@ -11,6 +11,9 @@ from typing import Any, Literal, Protocol, cast
 from k_market_ai.news.domain import MarketImpact, NewsImportance, NewsSentiment
 
 APPROVED_MODEL_BUNDLE_COMMIT = "ab82ccc51cb096872f9a110a85c027a4158a147f"
+DISCLOSURE_IMPACT_ARTIFACT_ROOT = (
+    "src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_transformer"
+)
 EXPECTED_FILE_SHA256 = {
     "src/hannah_montana_ai/model_store/financial_nlp_ml.joblib": (
         "04bb18037d28c59c487779531c90db5faa2e2136a3ca1dfe1d7af1a781ad6157"
@@ -18,14 +21,11 @@ EXPECTED_FILE_SHA256 = {
     "src/hannah_montana_ai/model_store/k_fnspid_impact_news_ml.joblib": (
         "df852dcddb8e76436f415153fe34e86b9671bfc2134d78be648df513acb6f3f6"
     ),
-    "src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_ml.joblib": (
-        "a1b5a021ba47cff72300e77cf694cf3aa093b232efeecd9be14627ccb2e04822"
-    ),
     "reports/k-fnspid-impact-news-training-report.json": (
         "c923702da9d221cd443dddc62df43c767c4cbbe851f249cc19b32f2fe5d016f6"
     ),
-    "reports/k-fnspid-impact-disclosure-training-report.json": (
-        "22a5eb0c47188d2b83e444b20dfa7854a79de883d8cb2726340d54409fa67a41"
+    "reports/k-fnspid-impact-disclosure-transformer-training-report.json": (
+        "a4c579ca2d32d1e2a77b911378a676535ebb148e5ebef7a1f6af00833e3c8cac"
     ),
     "reports/kf-deberta-sentiment-training-report.json": (
         "78c6db262e9263c84b32bd580c30b81335baea56ea210057fbb36edb58039a01"
@@ -35,6 +35,18 @@ EXPECTED_FILE_SHA256 = {
     ),
     "src/hannah_montana_ai/model_store/kf_deberta_sentiment/adapter_model.safetensors": (
         "506a4290af390f9ebd3a3cabc8ae592e6c4c53837d44f1fb821c86819dd81c88"
+    ),
+    f"{DISCLOSURE_IMPACT_ARTIFACT_ROOT}/adapter_config.json": (
+        "d4e75592e5273c12d1d5aea161a301362b2a805748464a709ee6c0c7e9236355"
+    ),
+    f"{DISCLOSURE_IMPACT_ARTIFACT_ROOT}/adapter_model.safetensors": (
+        "a59f3f17b7c709554a21ead716725e5560ab314193d06f9aa60d27033315f962"
+    ),
+    f"{DISCLOSURE_IMPACT_ARTIFACT_ROOT}/tokenizer.json": (
+        "00ae27b3bb1e3dbc8f7b33bfd6bc543b96c7451fd008092e01e8f0308793f19c"
+    ),
+    f"{DISCLOSURE_IMPACT_ARTIFACT_ROOT}/tokenizer_config.json": (
+        "f9051b19e43e2a1be479bc0ed9e27e1e40a43a2a32f4bd6d585b3e7045f62654"
     ),
 }
 
@@ -156,6 +168,9 @@ class FinancialSignalClassifier:
             impact_module = importlib.import_module(
                 "hannah_montana_ai.services.market_impact_model"
             )
+            transformer_impact_module = importlib.import_module(
+                "hannah_montana_ai.services.transformer_impact_model"
+            )
             model = model_module.MachineLearningFinancialNlpModel(
                 self._root / "src/hannah_montana_ai/model_store/financial_nlp_ml.joblib"
             )
@@ -175,10 +190,12 @@ class FinancialSignalClassifier:
                 self._root / "reports/k-fnspid-impact-news-training-report.json",
                 "NEWS",
             )
-            disclosure_impact = impact_module.KFnspidMarketImpactModel(
+            disclosure_impact = transformer_impact_module.KfDebertaImpactModel(
                 self._root
-                / "src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_ml.joblib",
-                self._root / "reports/k-fnspid-impact-disclosure-training-report.json",
+                / "src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_transformer",
+                self._root / "reports/k-fnspid-impact-disclosure-transformer-training-report.json",
+                self._root
+                / "artifacts/pretraining/kf-deberta-k-fnspid-v4-dapt-temporal-v2/merged_fp32",
                 "DISCLOSURE",
             )
             if not news_impact.enabled or not disclosure_impact.enabled:
