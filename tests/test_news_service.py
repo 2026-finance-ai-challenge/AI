@@ -120,10 +120,11 @@ class FakeClassifier:
         title: str,
         paragraphs: tuple[str, ...],
         candidate_companies: tuple[str, ...],
+        source_type: str = "NEWS",
     ) -> NewsSignals:
         assert title
         assert paragraphs
-        del candidate_companies
+        del candidate_companies, source_type
         return NewsSignals(
             event_type="PRODUCT_LAUNCH",
             sentiment=NewsSentiment.POSITIVE,

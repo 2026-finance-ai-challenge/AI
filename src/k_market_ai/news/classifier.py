@@ -6,7 +6,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from k_market_ai.news.domain import MarketImpact, NewsImportance, NewsSentiment
 
@@ -18,8 +18,14 @@ EXPECTED_FILE_SHA256 = {
     "src/hannah_montana_ai/model_store/k_fnspid_impact_news_ml.joblib": (
         "df852dcddb8e76436f415153fe34e86b9671bfc2134d78be648df513acb6f3f6"
     ),
+    "src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_ml.joblib": (
+        "a1b5a021ba47cff72300e77cf694cf3aa093b232efeecd9be14627ccb2e04822"
+    ),
     "reports/k-fnspid-impact-news-training-report.json": (
         "c923702da9d221cd443dddc62df43c767c4cbbe851f249cc19b32f2fe5d016f6"
+    ),
+    "reports/k-fnspid-impact-disclosure-training-report.json": (
+        "22a5eb0c47188d2b83e444b20dfa7854a79de883d8cb2726340d54409fa67a41"
     ),
     "reports/kf-deberta-sentiment-training-report.json": (
         "78c6db262e9263c84b32bd580c30b81335baea56ea210057fbb36edb58039a01"
@@ -58,6 +64,7 @@ class NewsSignalClassifier(Protocol):
         title: str,
         paragraphs: tuple[str, ...],
         candidate_companies: tuple[str, ...],
+        source_type: Literal["NEWS", "DISCLOSURE"] = "NEWS",
     ) -> NewsSignals: ...
 
 
@@ -73,32 +80,36 @@ class HanaNewsSignalClassifier:
         self._expected_commit = expected_commit
         self._runtime_environment = runtime_environment
         self._lock = threading.Lock()
-        self._models: tuple[Any, Any, Any] | None = None
+        self._models: tuple[Any, Any, Any, Any] | None = None
 
     def classify(
         self,
         title: str,
         paragraphs: tuple[str, ...],
         candidate_companies: tuple[str, ...],
+        source_type: Literal["NEWS", "DISCLOSURE"] = "NEWS",
     ) -> NewsSignals:
-        model, sentiment_model, impact_model = self._load()
+        model, sentiment_model, news_impact_model, disclosure_impact_model = self._load()
+        impact_model = disclosure_impact_model if source_type == "DISCLOSURE" else news_impact_model
         text = "\n".join((title, *paragraphs)).strip()
         target = candidate_companies[0] if candidate_companies else ""
 
-        event_probabilities = cast(dict[str, float], model.event_tag_probabilities(text, "NEWS"))
+        event_probabilities = cast(
+            dict[str, float], model.event_tag_probabilities(text, source_type)
+        )
         event_type = max(event_probabilities, key=event_probabilities.__getitem__)
         sentiment_probabilities = None
         if sentiment_model.enabled:
-            sentiment_probabilities = sentiment_model.probabilities(text, "NEWS", target)
+            sentiment_probabilities = sentiment_model.probabilities(text, source_type, target)
         if sentiment_probabilities is None:
             sentiment_probabilities = cast(dict[str, float], model.sentiment_probabilities(text))
-        impact_prediction = impact_model.predict(text, "NEWS")
+        impact_prediction = impact_model.predict(text, source_type)
         if impact_prediction is None:
             raise NewsClassifierUnavailable("The verified Hana classifier returned no result.")
 
         sentiment_label = max(sentiment_probabilities, key=sentiment_probabilities.__getitem__)
         importance_probabilities = cast(
-            dict[str, float], model.importance_probabilities(text, "NEWS")
+            dict[str, float], model.importance_probabilities(text, source_type)
         )
         importance_label = max(importance_probabilities, key=importance_probabilities.__getitem__)
         direction = {
@@ -128,7 +139,7 @@ class HanaNewsSignalClassifier:
             model_version=f"hana-finance-{bundle_digest}",
         )
 
-    def _load(self) -> tuple[Any, Any, Any]:
+    def _load(self) -> tuple[Any, Any, Any, Any]:
         if self._models is not None:
             return self._models
         with self._lock:
@@ -159,16 +170,22 @@ class HanaNewsSignalClassifier:
                 runtime_environment=self._runtime_environment,
                 release_required=False,
             )
-            impact = impact_module.KFnspidMarketImpactModel(
+            news_impact = impact_module.KFnspidMarketImpactModel(
                 self._root / "src/hannah_montana_ai/model_store/k_fnspid_impact_news_ml.joblib",
                 self._root / "reports/k-fnspid-impact-news-training-report.json",
                 "NEWS",
             )
-            if not impact.enabled:
+            disclosure_impact = impact_module.KFnspidMarketImpactModel(
+                self._root
+                / "src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_ml.joblib",
+                self._root / "reports/k-fnspid-impact-disclosure-training-report.json",
+                "DISCLOSURE",
+            )
+            if not news_impact.enabled or not disclosure_impact.enabled:
                 raise NewsClassifierUnavailable(
                     "The verified Hana K-FNSPID artifact did not pass its deployment gate."
                 )
-            self._models = (model, sentiment, impact)
+            self._models = (model, sentiment, news_impact, disclosure_impact)
             return self._models
 
     def _verify_source_and_artifacts(self) -> None:
