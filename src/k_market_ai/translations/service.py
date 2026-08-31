@@ -32,6 +32,8 @@ facts. Return every supplied ID and source hash exactly once. Return only the re
 
 HANGUL_PATTERN = re.compile(r"[\u3131-\u318e\uac00-\ud7a3]")
 ROMANIZED_CURRENCY_PATTERN = re.compile(r"\b(?:eok|jo)(?:[ -]?won)?\b|\bman[ -]?won\b", re.I)
+NEWS_COMBINED_MAX_CHARACTERS = 18_000
+NEWS_COMBINED_MAX_PARAGRAPHS = 20
 KOREAN_CURRENCY_PATTERN = re.compile(
     r"(?P<number>\d[\d,]*(?:\.\d+)?)\s*(?P<large_unit>조|억)원?"
     r"|(?P<man_number>\d[\d,]*(?:\.\d+)?)\s*만원"
@@ -205,7 +207,10 @@ class TranslationService:
             "target_locale": target_locale,
             "translation_version": translation_version,
         }
-        if sum(len(paragraph) for paragraph in paragraphs) <= 18_000:
+        if (
+            sum(len(paragraph) for paragraph in paragraphs) <= NEWS_COMBINED_MAX_CHARACTERS
+            and len(paragraphs) <= NEWS_COMBINED_MAX_PARAGRAPHS
+        ):
             parsed = await self._parse(
                 NEWS_NARRATIVE_INSTRUCTIONS,
                 payload,
@@ -355,7 +360,10 @@ def _paragraph_chunks(paragraphs: Sequence[str]) -> tuple[tuple[str, ...], ...]:
     current: list[str] = []
     current_length = 0
     for paragraph in paragraphs:
-        if current and (len(current) >= 20 or current_length + len(paragraph) > 18_000):
+        if current and (
+            len(current) >= NEWS_COMBINED_MAX_PARAGRAPHS
+            or current_length + len(paragraph) > NEWS_COMBINED_MAX_CHARACTERS
+        ):
             chunks.append(tuple(current))
             current = []
             current_length = 0
