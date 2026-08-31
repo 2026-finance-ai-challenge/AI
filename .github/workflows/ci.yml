@@ -47,6 +47,10 @@ jobs:
             echo "운영 AI 배포에 frontend 서비스를 포함할 수 없습니다." >&2
             exit 1
           fi
+          if grep -Fq '127.0.0.1:15101' deploy/deploy-ai.sh; then
+            echo "제거된 frontend 포트를 건강 확인에 사용할 수 없습니다." >&2
+            exit 1
+          fi
       - name: AI 이미지 빌드
         run: docker build --tag kmarket-ai:ci .
 
