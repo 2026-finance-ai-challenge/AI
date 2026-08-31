@@ -41,6 +41,8 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
 
     assert [item.id for item in result.items] == ["T1", "T2"]
     assert result.items[0].translated_text == "Samsung Electronics Unveils New Product"
+    assert responses.arguments["reasoning"] == {"effort": "minimal"}
+    assert responses.arguments["verbosity"] == "low"
     assert responses.arguments["store"] is False
     assert responses.arguments["timeout"] == 90.0
 
