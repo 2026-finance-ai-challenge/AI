@@ -1,0 +1,1 @@
+"""Versioned production model artifacts."""
