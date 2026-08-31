@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from k_market_ai.news.classifier import (
-    HanaNewsSignalClassifier,
+    FinancialSignalClassifier,
     NewsClassifierUnavailable,
     _git_commit,
 )
@@ -42,8 +42,8 @@ class DisabledTransformer:
     enabled = False
 
 
-def test_hana_classifier_keeps_semantic_and_market_impact_signals_separate(tmp_path) -> None:
-    classifier = HanaNewsSignalClassifier(tmp_path, expected_commit="a" * 40)
+def test_financial_classifier_keeps_semantic_and_market_impact_signals_separate(tmp_path) -> None:
+    classifier = FinancialSignalClassifier(tmp_path, expected_commit="a" * 40)
     classifier._models = (
         FakeFinancialModel(),
         DisabledTransformer(),
@@ -59,10 +59,10 @@ def test_hana_classifier_keeps_semantic_and_market_impact_signals_separate(tmp_p
     assert result.market_impact == MarketImpact.POSITIVE
     assert result.market_impact_level == NewsImportance.MEDIUM
     assert result.market_impact_confidence == 0.62
-    assert result.model_version.startswith("hana-finance-")
+    assert result.model_version.startswith("kmarket-finance-")
 
 
-def test_hana_source_revision_and_missing_artifact_fail_closed(tmp_path) -> None:
+def test_model_source_revision_and_missing_artifact_fail_closed(tmp_path) -> None:
     git = tmp_path / ".git"
     reference = git / "refs/heads/main"
     reference.parent.mkdir(parents=True)
@@ -70,6 +70,6 @@ def test_hana_source_revision_and_missing_artifact_fail_closed(tmp_path) -> None
     (git / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
     assert _git_commit(tmp_path) == "b" * 40
 
-    classifier = HanaNewsSignalClassifier(tmp_path, expected_commit="b" * 40)
+    classifier = FinancialSignalClassifier(tmp_path, expected_commit="b" * 40)
     with pytest.raises(NewsClassifierUnavailable, match="integrity verification"):
         classifier.classify("제목", ("본문",), ())

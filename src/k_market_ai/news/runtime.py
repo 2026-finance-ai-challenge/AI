@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from openai import AsyncOpenAI
 
 from k_market_ai.core.config import Settings
-from k_market_ai.news.classifier import HanaNewsSignalClassifier
+from k_market_ai.news.classifier import FinancialSignalClassifier
 from k_market_ai.news.service import NewsIntelligenceService
 from k_market_ai.translations.service import TranslationService
 
@@ -27,10 +27,10 @@ class NewsRuntime:
             max_retries=0,
         )
         service = None
-        if settings.hana_project_root is not None:
-            classifier = HanaNewsSignalClassifier(
-                settings.hana_project_root,
-                expected_commit=settings.hana_expected_commit,
+        if settings.model_bundle_root is not None:
+            classifier = FinancialSignalClassifier(
+                settings.model_bundle_root,
+                expected_commit=settings.model_bundle_commit,
                 runtime_environment=settings.environment,
             )
             service = NewsIntelligenceService(client, settings, classifier)

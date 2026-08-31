@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,8 +37,20 @@ class Settings(BaseSettings):
     tax_document_prompt_version: str = "tax-document-v1"
     peer_model: str = "gpt-5-mini"
     peer_prompt_version: str = "global-peer-narrative-v1"
-    hana_project_root: Path | None = None
-    hana_expected_commit: str = "ab82ccc51cb096872f9a110a85c027a4158a147f"
+    model_bundle_root: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "KMARKET_AI_MODEL_BUNDLE_ROOT",
+            "KMARKET_AI_HANA_PROJECT_ROOT",
+        ),
+    )
+    model_bundle_commit: str = Field(
+        default="ab82ccc51cb096872f9a110a85c027a4158a147f",
+        validation_alias=AliasChoices(
+            "KMARKET_AI_MODEL_BUNDLE_COMMIT",
+            "KMARKET_AI_HANA_EXPECTED_COMMIT",
+        ),
+    )
 
     @property
     def docs_enabled(self) -> bool:
@@ -54,7 +66,7 @@ class Settings(BaseSettings):
 
     @property
     def news_configured(self) -> bool:
-        return self.openai_configured and self.hana_project_root is not None
+        return self.openai_configured and self.model_bundle_root is not None
 
 
 @lru_cache
