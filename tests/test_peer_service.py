@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from openai import OpenAIError
 
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
@@ -44,6 +45,20 @@ def test_global_peer_service_refuses_stock_without_validated_catalog_data() -> N
         asyncio.run(service.analyze("0126Z0", "a" * 64))
 
     assert error.value.code == "GLOBAL_PEER_DATA_UNAVAILABLE"
+
+
+def test_global_peer_service_uses_verified_catalog_when_provider_is_unavailable() -> None:
+    service = GlobalPeerService(
+        SimpleNamespace(responses=UnavailableResponses()),
+        Settings(environment="test", peer_prompt_version="peer-test-v2"),
+    )
+
+    result = asyncio.run(service.analyze("005930", "a" * 64))
+
+    assert len(result.comparisons) == 3
+    assert all(item.peer.logo_url for item in result.comparisons)
+    assert all(len(item.description.split()) <= 36 for item in result.comparisons)
+    assert result.source == "KMARKET_GLOBAL_PEER_VERIFIED_CATALOG"
 
 
 class FakeResponses:
@@ -97,3 +112,8 @@ class FakeResponses:
                 ),
             )
         )
+
+
+class UnavailableResponses:
+    async def parse(self, **arguments: object) -> SimpleNamespace:
+        raise OpenAIError("provider timeout")
