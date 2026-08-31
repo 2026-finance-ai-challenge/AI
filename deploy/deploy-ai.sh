@@ -16,6 +16,22 @@ runtime_backup=""
 image_env_backup=""
 runtime_swapped=0
 
+remove_runtime_tree() {
+  local target=$1
+  case "$target" in
+    "$DEPLOY_ROOT"/.kmarket-model-runtime.*) ;;
+    *)
+      echo "허용되지 않은 K-Market 런타임 정리 경로입니다: $target" >&2
+      return 1
+      ;;
+  esac
+
+  if [[ -d "$target" ]]; then
+    chmod -R u+w "$target"
+    rm -rf -- "$target"
+  fi
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
@@ -39,7 +55,7 @@ cleanup() {
   fi
 
   if [[ -n "$runtime_temporary" && -d "$runtime_temporary" ]]; then
-    rm -rf "$runtime_temporary"
+    remove_runtime_tree "$runtime_temporary"
   fi
   if [[ -n "$image_env_backup" && -f "$image_env_backup" ]]; then
     rm -f "$image_env_backup"
@@ -207,7 +223,7 @@ if not required.issubset(result):
 PY
 
 # 분류 계약까지 통과한 뒤에만 이전 런타임을 제거한다.
-rm -rf "$runtime_backup"
+remove_runtime_tree "$runtime_backup"
 runtime_backup=""
 runtime_swapped=0
 docker image prune --force --filter until=168h >/dev/null
