@@ -103,10 +103,10 @@ git -C "$runtime_temporary" sparse-checkout set --no-cone --stdin <<'SPARSE_PATH
 /src/hannah_montana_ai/training/
 /src/hannah_montana_ai/model_store/financial_nlp_ml.joblib
 /src/hannah_montana_ai/model_store/k_fnspid_impact_news_ml.joblib
-/src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_ml.joblib
+/src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_transformer/
 /src/hannah_montana_ai/model_store/kf_deberta_sentiment/
 /reports/k-fnspid-impact-news-training-report.json
-/reports/k-fnspid-impact-disclosure-training-report.json
+/reports/k-fnspid-impact-disclosure-transformer-training-report.json
 /reports/kf-deberta-sentiment-training-report.json
 /reports/korean-finance-sentiment-benchmark.json
 SPARSE_PATHS
@@ -125,16 +125,20 @@ cp -a "$MODEL_RUNTIME/$MODEL_BASE" "$runtime_temporary/$MODEL_BASE"
   sha256sum --check --strict <<'CHECKSUMS'
 04bb18037d28c59c487779531c90db5faa2e2136a3ca1dfe1d7af1a781ad6157  src/hannah_montana_ai/model_store/financial_nlp_ml.joblib
 df852dcddb8e76436f415153fe34e86b9671bfc2134d78be648df513acb6f3f6  src/hannah_montana_ai/model_store/k_fnspid_impact_news_ml.joblib
-a1b5a021ba47cff72300e77cf694cf3aa093b232efeecd9be14627ccb2e04822  src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_ml.joblib
 c923702da9d221cd443dddc62df43c767c4cbbe851f249cc19b32f2fe5d016f6  reports/k-fnspid-impact-news-training-report.json
-22a5eb0c47188d2b83e444b20dfa7854a79de883d8cb2726340d54409fa67a41  reports/k-fnspid-impact-disclosure-training-report.json
+a4c579ca2d32d1e2a77b911378a676535ebb148e5ebef7a1f6af00833e3c8cac  reports/k-fnspid-impact-disclosure-transformer-training-report.json
 78c6db262e9263c84b32bd580c30b81335baea56ea210057fbb36edb58039a01  reports/kf-deberta-sentiment-training-report.json
 996b6d0bcbd03a508dd36d7ceb2ab4135de1deaffa15854a987137147c5b71f9  reports/korean-finance-sentiment-benchmark.json
 506a4290af390f9ebd3a3cabc8ae592e6c4c53837d44f1fb821c86819dd81c88  src/hannah_montana_ai/model_store/kf_deberta_sentiment/adapter_model.safetensors
+d4e75592e5273c12d1d5aea161a301362b2a805748464a709ee6c0c7e9236355  src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_transformer/adapter_config.json
+a59f3f17b7c709554a21ead716725e5560ab314193d06f9aa60d27033315f962  src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_transformer/adapter_model.safetensors
+00ae27b3bb1e3dbc8f7b33bfd6bc543b96c7451fd008092e01e8f0308793f19c  src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_transformer/tokenizer.json
+f9051b19e43e2a1be479bc0ed9e27e1e40a43a2a32f4bd6d585b3e7045f62654  src/hannah_montana_ai/model_store/k_fnspid_impact_disclosure_transformer/tokenizer_config.json
 1f465cfdcef6a346e9fcce4071934d02a5007561a41ac551c5dc6d5f3f3cbd87  artifacts/pretraining/kf-deberta-k-fnspid-v4-dapt-temporal-v2/merged_fp32/model.safetensors
 05751a3bc3e907f9d7c92c93517b68416496febc167db9a7363dc729d809675c  artifacts/pretraining/kf-deberta-k-fnspid-v4-dapt-temporal-v2/merged_fp32/config.json
 CHECKSUMS
 )
+chmod -R a=rX "$runtime_temporary"
 
 runtime_backup="$DEPLOY_ROOT/.kmarket-model-runtime.previous"
 mv "$MODEL_RUNTIME" "$runtime_backup"
