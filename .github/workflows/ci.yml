@@ -40,6 +40,13 @@ jobs:
         run: uv run mypy
       - name: 테스트
         run: uv run pytest
+      - name: 배포 스크립트 검증
+        run: |
+          bash -n deploy/deploy-ai.sh
+          if grep -Eq '(^|[[:space:]])frontend([[:space:]]|$)' deploy/deploy-ai.sh; then
+            echo "운영 AI 배포에 frontend 서비스를 포함할 수 없습니다." >&2
+            exit 1
+          fi
       - name: AI 이미지 빌드
         run: docker build --tag kmarket-ai:ci .
 
