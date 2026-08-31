@@ -10,7 +10,7 @@ from typing import Any, Literal, Protocol, cast
 
 from k_market_ai.news.domain import MarketImpact, NewsImportance, NewsSentiment
 
-EXPECTED_HANA_COMMIT = "ab82ccc51cb096872f9a110a85c027a4158a147f"
+APPROVED_MODEL_BUNDLE_COMMIT = "ab82ccc51cb096872f9a110a85c027a4158a147f"
 EXPECTED_FILE_SHA256 = {
     "src/hannah_montana_ai/model_store/financial_nlp_ml.joblib": (
         "04bb18037d28c59c487779531c90db5faa2e2136a3ca1dfe1d7af1a781ad6157"
@@ -68,12 +68,12 @@ class NewsSignalClassifier(Protocol):
     ) -> NewsSignals: ...
 
 
-class HanaNewsSignalClassifier:
+class FinancialSignalClassifier:
     def __init__(
         self,
         project_root: Path,
         *,
-        expected_commit: str = EXPECTED_HANA_COMMIT,
+        expected_commit: str = APPROVED_MODEL_BUNDLE_COMMIT,
         runtime_environment: str = "local",
     ) -> None:
         self._root = project_root.resolve(strict=True)
@@ -105,7 +105,7 @@ class HanaNewsSignalClassifier:
             sentiment_probabilities = cast(dict[str, float], model.sentiment_probabilities(text))
         impact_prediction = impact_model.predict(text, source_type)
         if impact_prediction is None:
-            raise NewsClassifierUnavailable("The verified Hana classifier returned no result.")
+            raise NewsClassifierUnavailable("The verified financial classifier returned no result.")
 
         sentiment_label = max(sentiment_probabilities, key=sentiment_probabilities.__getitem__)
         importance_probabilities = cast(
@@ -136,7 +136,7 @@ class HanaNewsSignalClassifier:
             ),
             market_impact_level=NewsImportance(str(impact_prediction.importance)),
             market_impact_score=float(impact_prediction.materiality_score),
-            model_version=f"hana-finance-{bundle_digest}",
+            model_version=f"kmarket-finance-{bundle_digest}",
         )
 
     def _load(self) -> tuple[Any, Any, Any, Any]:
@@ -183,19 +183,19 @@ class HanaNewsSignalClassifier:
             )
             if not news_impact.enabled or not disclosure_impact.enabled:
                 raise NewsClassifierUnavailable(
-                    "The verified Hana K-FNSPID artifact did not pass its deployment gate."
+                    "The verified K-FNSPID artifact did not pass its deployment gate."
                 )
             self._models = (model, sentiment, news_impact, disclosure_impact)
             return self._models
 
     def _verify_source_and_artifacts(self) -> None:
         if _git_commit(self._root) != self._expected_commit:
-            raise NewsClassifierUnavailable("The mounted Hana source revision is not approved.")
+            raise NewsClassifierUnavailable("The mounted model source revision is not approved.")
         for relative, expected in EXPECTED_FILE_SHA256.items():
             path = self._root / relative
             if not path.is_file() or path.is_symlink() or _sha256(path) != expected:
                 raise NewsClassifierUnavailable(
-                    f"The mounted Hana artifact failed integrity verification: {relative}"
+                    f"The mounted model artifact failed integrity verification: {relative}"
                 )
 
 
@@ -223,4 +223,4 @@ def _git_commit(root: Path) -> str:
                 commit, name = line.split(" ", 1)
                 if name == reference:
                     return commit
-    raise NewsClassifierUnavailable("The mounted Hana Git revision cannot be verified.")
+    raise NewsClassifierUnavailable("The mounted model Git revision cannot be verified.")
