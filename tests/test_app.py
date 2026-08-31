@@ -388,10 +388,12 @@ class FakeNewsService:
         title: str,
         paragraphs: tuple[str, ...],
         candidate_companies: tuple[str, ...],
+        source_type: str = "NEWS",
     ) -> NewsSignals:
         assert title == "제목"
         assert paragraphs == ("본문",)
         assert candidate_companies == ()
+        assert source_type in {"NEWS", "DISCLOSURE"}
         return NewsSignals(
             event_type="COMPANY_UPDATE",
             sentiment=NewsSentiment.NEUTRAL,
@@ -411,6 +413,7 @@ class FakeNewsService:
         title: str,
         paragraphs: tuple[str, ...],
         candidate_companies: tuple[str, ...],
+        source_type: str = "NEWS",
     ) -> NewsAnalysis:
         assert title == "제목"
         assert paragraphs == ("본문",)
