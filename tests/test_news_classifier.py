@@ -44,7 +44,12 @@ class DisabledTransformer:
 
 def test_hana_classifier_keeps_semantic_and_market_impact_signals_separate(tmp_path) -> None:
     classifier = HanaNewsSignalClassifier(tmp_path, expected_commit="a" * 40)
-    classifier._models = (FakeFinancialModel(), DisabledTransformer(), FakeImpactModel())
+    classifier._models = (
+        FakeFinancialModel(),
+        DisabledTransformer(),
+        FakeImpactModel(),
+        FakeImpactModel(),
+    )
 
     result = classifier.classify("제목", ("본문",), ("Company",))
 

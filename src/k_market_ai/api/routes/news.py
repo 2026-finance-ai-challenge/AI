@@ -1,4 +1,4 @@
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,6 +17,7 @@ class NewsAnalysisRequest(BaseModel):
     title: str = Field(min_length=1, max_length=1_000)
     paragraphs: tuple[str, ...] = Field(min_length=1, max_length=200)
     candidate_companies: tuple[str, ...] = Field(default=(), max_length=75)
+    source_type: Literal["NEWS", "DISCLOSURE"] = "NEWS"
 
 
 class NewsAnalysisResponse(BaseModel):
@@ -94,6 +95,7 @@ async def analyze_news(
         body.title,
         body.paragraphs,
         body.candidate_companies,
+        body.source_type,
     )
     return NewsAnalysisResponse(
         english_title=result.english_title,
@@ -126,6 +128,7 @@ async def classify_news(
         body.title,
         body.paragraphs,
         body.candidate_companies,
+        body.source_type,
     )
     return NewsSignalResponse(
         event_type=result.event_type,
