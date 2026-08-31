@@ -336,6 +336,8 @@ class TranslationService:
                 instructions=instructions,
                 input=json.dumps(payload, ensure_ascii=False),
                 text_format=result_type,
+                reasoning={"effort": "minimal"},
+                verbosity="low",
                 store=False,
                 timeout=effective_timeout,
             )
