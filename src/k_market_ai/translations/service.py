@@ -4,7 +4,7 @@ import logging
 from collections.abc import Sequence
 from typing import Annotated, Any
 
-from openai import AsyncOpenAI, OpenAIError
+from openai import APITimeoutError, AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field
 
 from k_market_ai.core.config import Settings
@@ -245,15 +245,37 @@ class TranslationService:
                 getattr(exception, "status_code", None),
                 provider_code,
             )
-            raise AppError(
-                code="AI_PROVIDER_UNAVAILABLE",
-                message="The AI provider is temporarily unavailable.",
-                status_code=503,
-            ) from exception
+            raise _provider_error(exception, provider_code) from exception
         parsed = response.output_parsed
         if parsed is None:
             raise _invalid_output()
         return parsed
+
+
+def _provider_error(exception: OpenAIError, provider_code: object) -> AppError:
+    if provider_code == "credit_balance_exhausted":
+        return AppError(
+            code="AI_PROVIDER_QUOTA_EXHAUSTED",
+            message="The AI provider quota is exhausted.",
+            status_code=503,
+        )
+    if isinstance(exception, APITimeoutError):
+        return AppError(
+            code="AI_PROVIDER_TIMEOUT",
+            message="The AI provider timed out.",
+            status_code=504,
+        )
+    if getattr(exception, "status_code", None) == 429:
+        return AppError(
+            code="AI_PROVIDER_RATE_LIMITED",
+            message="The AI provider rate limit was reached.",
+            status_code=429,
+        )
+    return AppError(
+        code="AI_PROVIDER_UNAVAILABLE",
+        message="The AI provider is temporarily unavailable.",
+        status_code=503,
+    )
 
 
 def canonical_news_source(
