@@ -254,8 +254,15 @@ class TranslationService:
                     request_timeout=self._news_timeout,
                 )
             )
-            translated_chunks = await asyncio.gather(*(translate_chunk(chunk) for chunk in chunks))
-            generated_summary = await summary_task
+            try:
+                translated_chunks = await asyncio.gather(
+                    *(translate_chunk(chunk) for chunk in chunks)
+                )
+                generated_summary = await summary_task
+            except BaseException:
+                summary_task.cancel()
+                await asyncio.gather(summary_task, return_exceptions=True)
+                raise
             what = generated_summary.what
             why = generated_summary.why
             impact = generated_summary.impact
@@ -337,7 +344,7 @@ class TranslationService:
                 input=json.dumps(payload, ensure_ascii=False),
                 text_format=result_type,
                 reasoning={"effort": "minimal"},
-                verbosity="low",
+                text={"verbosity": "low"},
                 store=False,
                 timeout=effective_timeout,
             )
