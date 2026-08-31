@@ -237,7 +237,7 @@ class GlobalPeerService:
             ranker_model_version=entry.ranker_model_version,
             narrative_model=self._model,
             prompt_version=self._prompt_version,
-            source="HANNAH_GLOBAL_PEER_HYBRID_RANKER+OPENAI_STRUCTURED_NARRATIVE",
+            source="KMARKET_GLOBAL_PEER_HYBRID_RANKER+OPENAI_STRUCTURED_NARRATIVE",
         )
 
 
