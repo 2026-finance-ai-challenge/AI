@@ -55,6 +55,72 @@ def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
+def test_english_title_batch_rejects_hangul_in_provider_output() -> None:
+    source = _title("T1", "마더스제약 상장예비심사 신청")
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="T1",
+                    source_hash=source.source_hash,
+                    translated_text="마더스제약 Files for KOSDAQ Listing Review",
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(_service(responses).translate_titles((source,), "en-US", "title-v1"))
+
+    assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
+def test_english_title_batch_requires_standard_krw_conversion() -> None:
+    source = _title("T1", "목표가 240만원, 투자유치 111억원")
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="T1",
+                    source_hash=source.source_hash,
+                    translated_text=(
+                        "Target Price at KRW 2.4 million After Raising KRW 11.1 billion"
+                    ),
+                ),
+            )
+        )
+    )
+
+    result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+
+    payload = json.loads(str(responses.arguments["input"]))
+    assert payload["items"][0]["required_currency_conversions"] == [
+        {"source_text": "240만원", "english_text": "KRW 2.4 million"},
+        {"source_text": "111억원", "english_text": "KRW 11.1 billion"},
+    ]
+    assert result.items[0].translated_text.startswith("Target Price")
+
+
+def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() -> None:
+    source = _title("T1", "투자유치 344억")
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="T1",
+                    source_hash=source.source_hash,
+                    translated_text="Raises 344 eok won in funding",
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+
+    assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
 def test_title_batch_classifies_provider_timeout() -> None:
     source = _title("T1", "공시 제목")
     timeout = APITimeoutError(request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
