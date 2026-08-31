@@ -29,5 +29,5 @@ mv "$temporary" "$IMAGE_ENV"
 cd "$DEPLOY_ROOT"
 docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" pull ai-api rag-worker
 docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" up -d --wait --wait-timeout 900 ai-api rag-worker backend
-curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15101/healthz >/dev/null
+curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15102/actuator/health >/dev/null
 docker image prune --force --filter until=168h >/dev/null
