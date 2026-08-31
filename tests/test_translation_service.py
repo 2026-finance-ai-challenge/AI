@@ -204,6 +204,23 @@ def test_long_news_narrative_translates_in_bounded_chunks_and_summarizes_once() 
     assert responses.translation_calls == 2
 
 
+def test_many_short_news_paragraphs_use_bounded_parallel_chunks() -> None:
+    title = "다문단 기사"
+    paragraphs = tuple(f"문단 {index} " + "가" * 80 for index in range(41))
+    source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
+    responses = ChunkedNewsResponses()
+
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v2"
+        )
+    )
+
+    assert result.translated_paragraphs == tuple(f"EN:{item}" for item in paragraphs)
+    assert responses.summary_calls == 1
+    assert responses.translation_calls == 3
+
+
 def test_disclosure_section_rejects_changed_table_structure() -> None:
     table = json.dumps({"rows": [["매출", 100]]}, ensure_ascii=False)
     source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
