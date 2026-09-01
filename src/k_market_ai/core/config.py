@@ -20,10 +20,10 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     service_token: SecretStr | None = None
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
-    news_model: str = "gpt-5-mini"
+    news_model: str = "gpt-5-nano"
     news_prompt_version: str = "news-intelligence-v2"
     term_prompt_version: str = "financial-term-v1"
-    translation_model: str = "gpt-5-mini"
+    translation_model: str = "gpt-5-nano"
     title_translation_prompt_version: str = "financial-title-translation-v2"
     news_narrative_prompt_version: str = "news-narrative-v2"
     disclosure_section_prompt_version: str = "disclosure-section-translation-v1"
@@ -31,11 +31,11 @@ class Settings(BaseSettings):
     news_narrative_timeout_seconds: float = Field(default=60.0, ge=10.0, le=180.0)
     disclosure_section_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
     filing_summary_prompt_version: str = "filing-summary-v2"
-    agent_model: str = "gpt-5-mini"
+    agent_model: str = "gpt-5-nano"
     agent_prompt_version: str = "market-agent-v1"
-    tax_document_model: str = "gpt-5-mini"
+    tax_document_model: str = "gpt-5-nano"
     tax_document_prompt_version: str = "tax-document-v1"
-    peer_model: str = "gpt-5-mini"
+    peer_model: str = "gpt-5-nano"
     peer_prompt_version: str = "global-peer-narrative-v2"
     model_bundle_root: Path | None = Field(
         default=None,

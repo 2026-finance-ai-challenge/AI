@@ -35,7 +35,7 @@ class ApiRagRuntime:
         client = AsyncOpenAI(
             api_key=settings.openai_api_key.get_secret_value(),
             timeout=30.0,
-            max_retries=2,
+            max_retries=0,
         )
         return cls(
             pool=pool,
@@ -43,7 +43,7 @@ class ApiRagRuntime:
             handler=AskDisclosureHandler(
                 repository,
                 embedding,
-                OpenAIAnswerAdapter(client),
+                OpenAIAnswerAdapter(client, settings.news_model),
             ),
         )
 
