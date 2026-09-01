@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     term_prompt_version: str = "financial-term-v1"
     translation_model: str = "gpt-5-nano"
     title_translation_prompt_version: str = "financial-title-translation-v2"
-    news_narrative_prompt_version: str = "news-narrative-v3"
+    news_narrative_prompt_version: str = "news-narrative-v4"
     disclosure_section_prompt_version: str = "disclosure-section-translation-v1"
     title_translation_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
     news_narrative_timeout_seconds: float = Field(default=60.0, ge=10.0, le=180.0)
