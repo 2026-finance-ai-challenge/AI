@@ -239,7 +239,7 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_long_news_narrative_uses_one_structured_request() -> None:
+def test_long_news_narrative_uses_bounded_structured_chunks() -> None:
     title = "장문 기사"
     paragraphs = ("가" * 10_000, "나" * 10_000, "다" * 2_000)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -252,11 +252,11 @@ def test_long_news_narrative_uses_one_structured_request() -> None:
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.calls == 1
-    assert responses.arguments["max_output_tokens"] == 100_000
+    assert responses.calls == 4
+    assert responses.arguments["max_output_tokens"] == 16_384
 
 
-def test_many_short_news_paragraphs_use_one_structured_request() -> None:
+def test_many_short_news_paragraphs_use_segment_bounded_chunks() -> None:
     title = "다문단 기사"
     paragraphs = tuple(f"문단 {index} " + "가" * 80 for index in range(41))
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -269,7 +269,7 @@ def test_many_short_news_paragraphs_use_one_structured_request() -> None:
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.calls == 1
+    assert responses.calls == 3
 
 
 def test_disclosure_section_rejects_changed_table_structure() -> None:
