@@ -166,29 +166,40 @@ class TranslationService:
             if item.id in expected:
                 raise _invalid_request("Title translation IDs must be unique.")
             expected[item.id] = item
-        parsed = await self._parse(
-            TITLE_INSTRUCTIONS,
-            {
-                "target_locale": target_locale,
-                "translation_version": translation_version,
-                "items": [
-                    {
-                        "id": item.id,
-                        "source_hash": item.source_hash,
-                        "source_text": _protect_currency_amounts(item.source_text)[0],
-                        "protected_currency_tokens": [
-                            token for token, _ in _protect_currency_amounts(item.source_text)[1]
-                        ],
-                    }
-                    for item in items
-                ],
-            },
-            _StructuredTitleBatch,
-            request_timeout=self._title_timeout,
-            max_output_tokens=TITLE_MAX_OUTPUT_TOKENS,
-        )
+        try:
+            parsed = await self._parse(
+                TITLE_INSTRUCTIONS,
+                {
+                    "target_locale": target_locale,
+                    "translation_version": translation_version,
+                    "items": [
+                        {
+                            "id": item.id,
+                            "source_hash": item.source_hash,
+                            "source_text": _protect_currency_amounts(item.source_text)[0],
+                            "protected_currency_tokens": [
+                                token for token, _ in _protect_currency_amounts(item.source_text)[1]
+                            ],
+                        }
+                        for item in items
+                    ],
+                },
+                _StructuredTitleBatch,
+                request_timeout=self._title_timeout,
+                max_output_tokens=TITLE_MAX_OUTPUT_TOKENS,
+            )
+        except AppError as exception:
+            if target_locale.lower().split("-", maxsplit=1)[0] != "en":
+                raise
+            logger.warning(
+                "Title translation provider result replaced with deterministic fallback code=%s",
+                exception.code,
+            )
+            parsed_items: Sequence[_StructuredTitle] = ()
+        else:
+            parsed_items = parsed.items
         returned: dict[str, str] = {}
-        for parsed_item in parsed.items:
+        for parsed_item in parsed_items:
             source_item = expected.get(parsed_item.id)
             if (
                 source_item is None
