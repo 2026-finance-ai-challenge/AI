@@ -52,14 +52,12 @@ def create_app(
                 )
             if agent_service is None:
                 app.state.agent_service = MarketAgentService(news_runtime.openai, app_settings)
-            if tax_document_service is None:
-                app.state.tax_document_service = TaxDocumentService(
-                    news_runtime.openai, app_settings
-                )
             if global_peer_service is None:
                 app.state.global_peer_service = GlobalPeerService(news_runtime.openai, app_settings)
             if translation_service is None:
                 app.state.translation_service = news_runtime.translation_service
+        if tax_document_service is None:
+            app.state.tax_document_service = TaxDocumentService(app_settings)
         try:
             yield
         finally:

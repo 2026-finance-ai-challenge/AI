@@ -61,7 +61,7 @@ def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_english_title_batch_transliterates_hangul_in_provider_output() -> None:
+def test_english_title_batch_rejects_hangul_in_provider_output() -> None:
     source = _title("T1", "마더스제약 상장예비심사 신청")
     responses = FakeResponses(
         SimpleNamespace(
@@ -75,9 +75,10 @@ def test_english_title_batch_transliterates_hangul_in_provider_output() -> None:
         )
     )
 
-    result = asyncio.run(_service(responses).translate_titles((source,), "en-US", "title-v1"))
+    with pytest.raises(AppError) as captured:
+        asyncio.run(_service(responses).translate_titles((source,), "en-US", "title-v1"))
 
-    assert result.items[0].translated_text == "madeoseujeyag Files for KOSDAQ Listing Review"
+    assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
 def test_english_title_batch_requires_standard_krw_conversion() -> None:
@@ -240,7 +241,7 @@ def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
     assert responses.arguments["timeout"] == 180.0
 
 
-def test_news_narrative_repairs_field_label_placeholders_without_retry() -> None:
+def test_news_narrative_rejects_field_label_placeholders_without_fallback() -> None:
     title = "노선 확대"
     paragraphs = ("회사는 가을 수요에 대응해 노선을 확대했다.", "경쟁력을 강화할 계획이다.")
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -256,19 +257,18 @@ def test_news_narrative_repairs_field_label_placeholders_without_retry() -> None
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_news_narrative(
-            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v3"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v3"
+            )
         )
-    )
 
-    assert result.what == "The company expanded routes to capture autumn demand."
-    assert result.why == "The company expanded routes to capture autumn demand."
-    assert result.impact == "It plans to strengthen its competitiveness."
+    assert captured.value.code == "AI_INVALID_OUTPUT"
     assert responses.calls == 3
 
 
-def test_news_narrative_repairs_non_english_or_unfinished_summaries_without_retry() -> None:
+def test_news_narrative_rejects_non_english_summary_without_fallback() -> None:
     title = "채용 확대"
     paragraphs = ("회사는 인재 확보를 위해 채용을 확대했다.", "경쟁력을 강화할 계획이다.")
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -284,14 +284,14 @@ def test_news_narrative_repairs_non_english_or_unfinished_summaries_without_retr
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_news_narrative(
-            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+            )
         )
-    )
 
-    assert result.why == "The source does not state a reason."
-    assert result.impact == "It plans to strengthen competitiveness."
+    assert captured.value.code == "AI_INVALID_OUTPUT"
     assert responses.calls == 3
 
 
@@ -326,7 +326,7 @@ def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
     assert responses.calls == 2
 
 
-def test_news_narrative_transliterates_hangul_in_english_output() -> None:
+def test_news_narrative_rejects_hangul_in_english_output() -> None:
     title = "실적 발표"
     paragraphs = ("매출이 증가했다.",)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -339,13 +339,14 @@ def test_news_narrative_transliterates_hangul_in_english_output() -> None:
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_news_narrative(
-            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
+            )
         )
-    )
 
-    assert result.translated_paragraphs == ("maechul increased.",)
+    assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
 def test_news_segment_schema_accepts_provider_text_for_service_validation() -> None:
@@ -391,7 +392,7 @@ def test_many_short_news_paragraphs_keep_one_translation_per_paragraph() -> None
     assert responses.calls == 42
 
 
-def test_disclosure_section_transliterates_missing_table_items() -> None:
+def test_disclosure_section_rejects_missing_table_items_without_fallback() -> None:
     table = json.dumps({"rows": [["매출", 100]]}, ensure_ascii=False)
     source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
     responses = FakeResponses(
@@ -402,18 +403,19 @@ def test_disclosure_section_transliterates_missing_table_items() -> None:
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_disclosure_section(
-            source_hash,
-            "재무 정보",
-            "매출 현황",
-            table,
-            "en",
-            "section-v1",
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_disclosure_section(
+                source_hash,
+                "재무 정보",
+                "매출 현황",
+                table,
+                "en",
+                "section-v1",
+            )
         )
-    )
 
-    assert json.loads(result.translated_table_data_json or "null") == {"rows": [["maechul", 100]]}
+    assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
 def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None:
@@ -445,7 +447,7 @@ def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None
     assert responses.arguments["max_output_tokens"] == 128_000
 
 
-def test_disclosure_section_transliterates_hangul_in_english_output() -> None:
+def test_disclosure_section_rejects_hangul_in_english_output() -> None:
     source_hash = _hash(canonical_disclosure_section("제목", "본문", None))
     responses = FakeResponses(
         SimpleNamespace(
@@ -455,13 +457,14 @@ def test_disclosure_section_transliterates_hangul_in_english_output() -> None:
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_disclosure_section(
-            source_hash, "제목", "본문", None, "en", "section-v1"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_disclosure_section(
+                source_hash, "제목", "본문", None, "en", "section-v1"
+            )
         )
-    )
 
-    assert result.translated_heading == "hangughanggonguju / Contract"
+    assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
 class FakeResponses:

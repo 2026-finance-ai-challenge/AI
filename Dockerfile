@@ -7,6 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN groupadd --system --gid 10001 kmarket \
     && useradd --system --uid 10001 --gid kmarket --create-home kmarket \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-kor \
+    && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv==0.11.12
 
 WORKDIR /app

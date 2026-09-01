@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Annotated, Any
 
-from anyascii import anyascii
 from openai import APITimeoutError, AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -301,8 +300,7 @@ class TranslationService:
             request_timeout=self._news_timeout,
             max_output_tokens=NEWS_SUMMARY_MAX_OUTPUT_TOKENS,
         )
-        what, why, impact = _repair_narrative_summaries(
-            translated_paragraphs,
+        what, why, impact = _validate_narrative_summaries(
             summary.what,
             summary.why,
             summary.impact,
@@ -498,63 +496,24 @@ _SUMMARY_PLACEHOLDERS = {
 }
 
 
-def _repair_narrative_summaries(
-    paragraphs: Sequence[str],
+def _validate_narrative_summaries(
     what: str,
     why: str,
     impact: str,
 ) -> tuple[str, str, str]:
-    repaired_what = _fallback_summary(paragraphs, "what") if _needs_summary_repair(what) else what
-    repaired_why = _fallback_summary(paragraphs, "why") if _needs_summary_repair(why) else why
-    repaired_impact = (
-        _fallback_summary(paragraphs, "impact") if _needs_summary_repair(impact) else impact
+    values = (
+        _concise_sentence(what),
+        _concise_sentence(why),
+        _concise_sentence(impact),
     )
-    return (
-        _concise_sentence(repaired_what),
-        _concise_sentence(repaired_why),
-        _concise_sentence(repaired_impact),
-    )
+    if any(_is_placeholder(value) or _contains_invalid_english(value) for value in values):
+        raise _invalid_output()
+    return values
 
 
 def _is_placeholder(value: str) -> bool:
     normalized = re.sub(r"[^a-z/]", "", value.casefold())
     return normalized in {re.sub(r"[^a-z/]", "", item) for item in _SUMMARY_PLACEHOLDERS}
-
-
-def _needs_summary_repair(value: str) -> bool:
-    stripped = value.strip()
-    return (
-        _is_placeholder(stripped)
-        or _contains_invalid_english(stripped)
-        or re.search(r"[.!?…][\"'”’)]?$", stripped) is None
-    )
-
-
-def _fallback_summary(paragraphs: Sequence[str], kind: str) -> str:
-    candidates = [paragraph.strip() for paragraph in paragraphs if paragraph.strip()]
-    if kind == "why":
-        pattern = re.compile(
-            r"\b(?:because|due to|cited|aims?|anticipat(?:e|es|ed|ing)|"
-            r"in response to|to meet|to capture)\b",
-            re.I,
-        )
-        fallback = "The source does not state a reason."
-    elif kind == "impact":
-        pattern = re.compile(
-            r"\b(?:may|could|will|expects?|plans?|expand|strengthen|increase|decrease|impact)\b",
-            re.I,
-        )
-        fallback = "The source does not state a direct impact."
-    else:
-        pattern = None
-        fallback = "The source does not state what happened."
-    selected = next(
-        (candidate for candidate in candidates if pattern and pattern.search(candidate)),
-        None,
-    )
-    if selected is None and kind == "what" and candidates:
-        selected = candidates[0]
-    return _concise_sentence(selected or fallback)
 
 
 def _concise_sentence(value: str) -> str:
@@ -564,6 +523,8 @@ def _concise_sentence(value: str) -> str:
         sentence = " ".join(words[:24]).rstrip(".,;:") + "."
     if len(sentence) > 180:
         sentence = sentence[:179].rstrip(" ,;:") + "…"
+    if sentence and re.search(r"[.!?…][\"'”’)]?$", sentence) is None:
+        sentence += "."
     return sentence
 
 
@@ -661,10 +622,7 @@ def _normalize_optional_english_output(value: str | None) -> str | None:
 
 
 def _normalize_english_output(value: str) -> str:
-    normalized = NON_ENGLISH_SCRIPT_PATTERN.sub(
-        lambda match: anyascii(match.group(0)).strip().lower(),
-        value,
-    )
+    normalized = value
     normalized = re.sub(
         r"\bKRW\s+(\d[\d,]*(?:\.\d+)?)\s+(trillion|billion|million)\s+won\b",
         r"KRW \1 \2",
@@ -826,20 +784,15 @@ def _rebuild_translated_table(
     translations: dict[str, str] = {}
     for item in translated_items or ():
         if item.id not in expected or item.id in translations:
-            continue
+            raise _invalid_output()
         translated = item.translated_text.strip()
         if target_locale.lower().split("-", maxsplit=1)[0] == "en":
             translated = _normalize_english_output(translated)
         if not translated:
-            continue
+            raise _invalid_output()
         translations[item.id] = translated
-    for item_id, source_text in source_items:
-        translations.setdefault(
-            item_id,
-            _normalize_english_output(source_text)
-            if target_locale.lower().split("-", maxsplit=1)[0] == "en"
-            else source_text,
-        )
+    if translations.keys() != expected.keys():
+        raise _invalid_output()
     index = 0
 
     def rebuild(value: Any) -> Any:
