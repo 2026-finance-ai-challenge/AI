@@ -10,10 +10,13 @@ dependencies = [
     "joblib>=1.5.3,<2.0.0",
     "numpy>=2.5.0,<3.0.0",
     "openai>=2.17.0,<3.0.0",
+    "pdf2image>=1.17.0,<2.0.0",
     "peft>=0.20.0,<0.21.0",
+    "pillow>=12.0.0,<13.0.0",
     "pgvector>=0.4.1,<1.0.0",
     "psycopg[binary,pool]>=3.3.0,<4.0.0",
     "pydantic-settings>=2.10.0,<3.0.0",
+    "pytesseract>=0.3.13,<1.0.0",
     "scikit-learn>=1.9.0,<2.0.0",
     "sentence-transformers>=5.1.0,<6.0.0",
     "torch>=2.13.0,<3.0.0",
@@ -64,6 +67,11 @@ select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "SIM"]
 python_version = "3.14"
 strict = true
 files = ["src/k_market_ai"]
+
+[[tool.mypy.overrides]]
+module = ["k_market_ai.tax.document_model.*"]
+# 이식한 원본 런타임은 선택적 Paddle 플러그인까지 동적 로딩하므로 서비스 경계에서 검증한다.
+ignore_errors = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --cov=k_market_ai --cov-report=term-missing"
