@@ -46,7 +46,7 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert responses.arguments["text"] == {"verbosity": "low"}
     assert responses.arguments["store"] is False
     assert responses.arguments["timeout"] == 90.0
-    assert responses.arguments["max_output_tokens"] == 128_000
+    assert responses.arguments["max_output_tokens"] == 16_384
 
 
 def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
