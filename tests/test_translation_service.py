@@ -395,12 +395,9 @@ def test_many_short_news_paragraphs_keep_one_translation_per_paragraph() -> None
 def test_disclosure_section_rejects_missing_table_items_without_fallback() -> None:
     table = json.dumps({"rows": [["매출", 100]]}, ensure_ascii=False)
     source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
-    responses = FakeResponses(
-        SimpleNamespace(
-            translated_heading="Financial Information",
-            translated_text="Revenue status",
-            translated_table_items=(),
-        )
+    responses = DisclosureResponses(
+        {"재무 정보": "Financial Information"},
+        (),
     )
 
     with pytest.raises(AppError) as captured:
@@ -421,12 +418,9 @@ def test_disclosure_section_rejects_missing_table_items_without_fallback() -> No
 def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None:
     table = json.dumps({"rows": [["매출", 100, True, None]]}, ensure_ascii=False)
     source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
-    responses = FakeResponses(
-        SimpleNamespace(
-            translated_heading="Financial Information",
-            translated_text="Revenue status",
-            translated_table_items=(SimpleNamespace(id="value-0", translated_text="Revenue"),),
-        )
+    responses = DisclosureResponses(
+        {"재무 정보": "Financial Information"},
+        (SimpleNamespace(id="value-0", translated_text="Revenue"),),
     )
 
     result = asyncio.run(
@@ -443,18 +437,16 @@ def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None
     assert json.loads(result.translated_table_data_json or "null") == {
         "rows": [["Revenue", 100, True, None]]
     }
+    assert result.translated_text == "Revenue"
     assert responses.arguments["timeout"] == 90.0
-    assert responses.arguments["max_output_tokens"] == 128_000
+    assert responses.arguments["max_output_tokens"] == 16_384
 
 
 def test_disclosure_section_rejects_hangul_in_english_output() -> None:
     source_hash = _hash(canonical_disclosure_section("제목", "본문", None))
-    responses = FakeResponses(
-        SimpleNamespace(
-            translated_heading="한국항공우주 / Contract",
-            translated_text="English body",
-            translated_table_items=None,
-        )
+    responses = DisclosureResponses(
+        {"제목": "한국항공우주 / Contract", "본문": "English body"},
+        (),
     )
 
     with pytest.raises(AppError) as captured:
@@ -465,6 +457,24 @@ def test_disclosure_section_rejects_hangul_in_english_output() -> None:
         )
 
     assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
+def test_disclosure_table_translation_is_bounded_and_preserves_ascii_cells() -> None:
+    rows = [[f"항목 {index}", str(index)] for index in range(20)]
+    table = json.dumps(rows, ensure_ascii=False)
+    source_hash = _hash(canonical_disclosure_section(None, "표 본문", table))
+    responses = EchoDisclosureResponses()
+
+    result = asyncio.run(
+        _service(responses).translate_disclosure_section(
+            source_hash, None, "표 본문", table, "en", "section-v2"
+        )
+    )
+
+    translated = json.loads(result.translated_table_data_json or "null")
+    assert translated[0] == ["Item 0", "0"]
+    assert translated[-1] == ["Item 19", "19"]
+    assert responses.batch_sizes == [18, 2]
 
 
 class FakeResponses:
@@ -527,8 +537,61 @@ class SingleNewsResponse:
         return SimpleNamespace(output_parsed=parsed)
 
 
+class DisclosureResponses:
+    def __init__(
+        self,
+        text_outputs: dict[str, str],
+        table_items: tuple[SimpleNamespace, ...],
+    ) -> None:
+        self.text_outputs = text_outputs
+        self.table_items = table_items
+        self.arguments: dict[str, object] = {}
+        self.calls = 0
+
+    async def parse(self, **arguments: object) -> SimpleNamespace:
+        self.calls += 1
+        self.arguments = arguments
+        payload = json.loads(str(arguments["input"]))
+        if "items" in payload:
+            return SimpleNamespace(output_parsed=SimpleNamespace(items=self.table_items))
+        return SimpleNamespace(
+            output_parsed=SimpleNamespace(
+                translated_text=self.text_outputs[str(payload["source_text"])]
+            )
+        )
+
+
+class EchoDisclosureResponses:
+    def __init__(self) -> None:
+        self.arguments: dict[str, object] = {}
+        self.batch_sizes: list[int] = []
+
+    async def parse(self, **arguments: object) -> SimpleNamespace:
+        self.arguments = arguments
+        payload = json.loads(str(arguments["input"]))
+        items = payload["items"]
+        self.batch_sizes.append(len(items))
+        return SimpleNamespace(
+            output_parsed=SimpleNamespace(
+                items=tuple(
+                    SimpleNamespace(
+                        id=item["id"],
+                        translated_text=item["source_text"].replace("항목", "Item"),
+                    )
+                    for item in items
+                )
+            )
+        )
+
+
 def _service(
-    responses: FakeResponses | FailingResponses | SingleNewsResponse,
+    responses: (
+        FakeResponses
+        | FailingResponses
+        | SingleNewsResponse
+        | DisclosureResponses
+        | EchoDisclosureResponses
+    ),
 ) -> TranslationService:
     return TranslationService(
         SimpleNamespace(responses=responses),
