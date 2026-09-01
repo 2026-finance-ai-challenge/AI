@@ -214,6 +214,7 @@ def test_news_narrative_repairs_field_label_placeholders_without_retry() -> None
     assert result.what == "The company expanded routes to capture autumn demand."
     assert result.why == "The company expanded routes to capture autumn demand."
     assert result.impact == "It plans to strengthen its competitiveness."
+    assert responses.calls == 3
 
 
 def test_news_narrative_rejects_hangul_in_english_output() -> None:
@@ -239,7 +240,7 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_long_news_narrative_uses_bounded_structured_chunks() -> None:
+def test_long_news_narrative_uses_one_request_per_bounded_segment() -> None:
     title = "장문 기사"
     paragraphs = ("가" * 10_000, "나" * 10_000, "다" * 2_000)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -252,11 +253,14 @@ def test_long_news_narrative_uses_bounded_structured_chunks() -> None:
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.calls == 4
-    assert responses.arguments["max_output_tokens"] == 16_384
+    assert responses.calls == 6
+    assert {arguments["max_output_tokens"] for arguments in responses.history} == {
+        2_048,
+        16_384,
+    }
 
 
-def test_many_short_news_paragraphs_use_segment_bounded_chunks() -> None:
+def test_many_short_news_paragraphs_keep_one_translation_per_paragraph() -> None:
     title = "다문단 기사"
     paragraphs = tuple(f"문단 {index} " + "가" * 80 for index in range(41))
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -269,7 +273,7 @@ def test_many_short_news_paragraphs_use_segment_bounded_chunks() -> None:
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.calls == 3
+    assert responses.calls == 42
 
 
 def test_disclosure_section_rejects_changed_table_structure() -> None:
@@ -349,9 +353,26 @@ class FakeResponses:
     def __init__(self, parsed: object) -> None:
         self.parsed = parsed
         self.arguments: dict[str, object] = {}
+        self.calls = 0
 
     async def parse(self, **arguments: object) -> SimpleNamespace:
+        self.calls += 1
         self.arguments = arguments
+        payload = json.loads(str(arguments["input"]))
+        if "source_text" in payload and hasattr(self.parsed, "translated_paragraphs"):
+            return SimpleNamespace(
+                output_parsed=SimpleNamespace(
+                    translated_text=self.parsed.translated_paragraphs[payload["segment_index"]]
+                )
+            )
+        if "translated_paragraphs" in payload and hasattr(self.parsed, "what"):
+            return SimpleNamespace(
+                output_parsed=SimpleNamespace(
+                    what=self.parsed.what,
+                    why=self.parsed.why,
+                    impact=self.parsed.impact,
+                )
+            )
         return SimpleNamespace(output_parsed=self.parsed)
 
 
@@ -368,20 +389,23 @@ class SingleNewsResponse:
     def __init__(self) -> None:
         self.calls = 0
         self.arguments: dict[str, object] = {}
+        self.history: list[dict[str, object]] = []
 
     async def parse(self, **arguments: object) -> SimpleNamespace:
         self.calls += 1
         self.arguments = arguments
+        self.history.append(arguments)
         payload = json.loads(str(arguments["input"]))
-        parsed = SimpleNamespace(
-            translated_paragraphs=tuple(
-                f"Translated paragraph {index + 1}"
-                for index, _ in enumerate(payload["source_paragraphs"])
-            ),
-            what="The company announced an update.",
-            why="The source states the reason.",
-            impact="The source describes a potential impact.",
-        )
+        if "source_text" in payload:
+            parsed = SimpleNamespace(
+                translated_text=f"Translated segment {payload['segment_index'] + 1}."
+            )
+        else:
+            parsed = SimpleNamespace(
+                what="The company announced an update.",
+                why="The source states the reason.",
+                impact="The source describes a potential impact.",
+            )
         return SimpleNamespace(output_parsed=parsed)
 
 
