@@ -12,6 +12,7 @@ from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
     TranslationService,
+    _canonicalize_non_krw_quantities,
     _currency_conversions,
     _restore_currency_amounts,
     _StructuredNewsSegmentItem,
@@ -125,6 +126,14 @@ def test_korean_currency_conversion_ignores_share_counts_and_foreign_currency() 
     assert _currency_conversions(source) == [
         {"source_text": "1조1000억", "english_text": "KRW 1.1 trillion"}
     ]
+
+
+def test_korean_magnitude_quantities_are_canonicalized_before_translation() -> None:
+    source = "3301만 6411주, 10만 8590주, 14억 6296만 7000스위스프랑, 투자 1조1000억"
+
+    assert _canonicalize_non_krw_quantities(source) == (
+        "33,016,411주, 108,590주, 1,462,967,000스위스프랑, 투자 1조1000억"
+    )
 
 
 def test_currency_restoration_accepts_provider_token_punctuation_variants() -> None:
