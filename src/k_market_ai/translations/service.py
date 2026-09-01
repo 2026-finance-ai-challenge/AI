@@ -65,6 +65,11 @@ source-grounded English sentence, no longer than 24 words or 180 characters. Nev
 label, heading, or placeholder such as What, Why, Impact, N/A, or TBD. Return only the requested
 schema."""
 
+NEWS_SUMMARY_KO_INSTRUCTIONS = """제공된 한국어 금융 뉴스 원문만 근거로 What, Why, Impact를
+한국어로 작성하라. 원문에 이유나 영향이 명시되지 않았다면 그 사실을 짧게 밝힌다. 각 필드는
+제목이나 레이블 없이 한 문장, 180자 이내로 작성하고 사실을 추가하거나 추정하지 않는다.
+요청된 스키마만 반환한다."""
+
 NEWS_SEGMENT_MAX_CHARACTERS = 6_000
 NEWS_SEGMENT_CONCURRENCY = 50
 MODEL_MAX_OUTPUT_TOKENS = 128_000
@@ -251,61 +256,64 @@ class TranslationService:
     ) -> NewsNarrative:
         canonical = canonical_news_source(title, paragraphs, content_availability)
         _verify_hash(canonical, source_hash)
-        segments = _segment_news_paragraphs(paragraphs)
-        semaphore = asyncio.Semaphore(NEWS_SEGMENT_CONCURRENCY)
+        locale = target_locale.lower().split("-", maxsplit=1)[0]
+        if locale not in {"en", "ko"}:
+            raise _invalid_request("News narrative locale must be en or ko.")
+        translated_paragraphs: tuple[str, ...]
 
-        async def translate_segment(
-            segment_index: int,
-            segment: tuple[int, str],
-        ) -> _StructuredNewsSegment:
-            protected_source, protected_amounts = _protect_currency_amounts(segment[1])
-            payload: dict[str, object] = {
-                "source_hash": source_hash,
-                "source_title": title,
-                "source_text": protected_source,
-                "protected_currency_tokens": [token for token, _ in protected_amounts],
-                "content_availability": content_availability,
-                "target_locale": target_locale,
-                "translation_version": translation_version,
-                "segment_index": segment_index,
-                "segment_count": len(segments),
-            }
-            async with semaphore:
-                return await self._parse(
-                    NEWS_SEGMENT_INSTRUCTIONS,
-                    payload,
-                    _StructuredNewsSegment,
-                    request_timeout=self._news_timeout,
-                    max_output_tokens=NEWS_SEGMENT_MAX_OUTPUT_TOKENS,
-                )
+        if locale == "en":
+            segments = _segment_news_paragraphs(paragraphs)
+            semaphore = asyncio.Semaphore(NEWS_SEGMENT_CONCURRENCY)
 
-        parsed_segments = await asyncio.gather(
-            *(translate_segment(index, segment) for index, segment in enumerate(segments))
-        )
-        translated_segments: list[list[str]] = [[] for _ in paragraphs]
-        for (paragraph_index, source_segment), parsed in zip(
-            segments, parsed_segments, strict=True
-        ):
-            translated = _restore_currency_amounts(
-                source_segment,
-                parsed.translated_text.strip(),
+            async def translate_segment(
+                segment_index: int,
+                segment: tuple[int, str],
+            ) -> _StructuredNewsSegment:
+                protected_source, protected_amounts = _protect_currency_amounts(segment[1])
+                payload: dict[str, object] = {
+                    "source_hash": source_hash,
+                    "source_title": title,
+                    "source_text": protected_source,
+                    "protected_currency_tokens": [token for token, _ in protected_amounts],
+                    "content_availability": content_availability,
+                    "target_locale": target_locale,
+                    "translation_version": translation_version,
+                    "segment_index": segment_index,
+                    "segment_count": len(segments),
+                }
+                async with semaphore:
+                    return await self._parse(
+                        NEWS_SEGMENT_INSTRUCTIONS,
+                        payload,
+                        _StructuredNewsSegment,
+                        request_timeout=self._news_timeout,
+                        max_output_tokens=NEWS_SEGMENT_MAX_OUTPUT_TOKENS,
+                    )
+
+            parsed_segments = await asyncio.gather(
+                *(translate_segment(index, segment) for index, segment in enumerate(segments))
             )
-            if target_locale.lower().split("-", maxsplit=1)[0] == "en":
-                translated = _normalize_english_output(translated)
-            if not translated or (
-                target_locale.lower().split("-", maxsplit=1)[0] == "en"
-                and _contains_invalid_english(translated)
+            translated_segments: list[list[str]] = [[] for _ in paragraphs]
+            for (paragraph_index, source_segment), parsed in zip(
+                segments, parsed_segments, strict=True
             ):
-                raise _invalid_output()
-            translated_segments[paragraph_index].append(translated)
-
-        translated_paragraphs = tuple(
-            " ".join(segments).strip() for segments in translated_segments
-        )
+                translated = _restore_currency_amounts(
+                    source_segment,
+                    parsed.translated_text.strip(),
+                )
+                translated = _normalize_english_output(translated)
+                if not translated or _contains_invalid_english(translated):
+                    raise _invalid_output()
+                translated_segments[paragraph_index].append(translated)
+            translated_paragraphs = tuple(
+                " ".join(translated).strip() for translated in translated_segments
+            )
+        else:
+            translated_paragraphs = tuple(paragraph.strip() for paragraph in paragraphs)
         if any(not paragraph for paragraph in translated_paragraphs):
             raise _invalid_output()
         summary = await self._parse(
-            NEWS_SUMMARY_INSTRUCTIONS,
+            NEWS_SUMMARY_INSTRUCTIONS if locale == "en" else NEWS_SUMMARY_KO_INSTRUCTIONS,
             {
                 "translated_paragraphs": translated_paragraphs,
                 "content_availability": content_availability,
@@ -320,14 +328,15 @@ class TranslationService:
             summary.what,
             summary.why,
             summary.impact,
+            locale,
         )
-        if target_locale.lower().split("-", maxsplit=1)[0] == "en":
+        if locale == "en":
             what, why, impact = (
                 _normalize_english_output(what),
                 _normalize_english_output(why),
                 _normalize_english_output(impact),
             )
-        if target_locale.lower().split("-", maxsplit=1)[0] == "en" and any(
+        if locale == "en" and any(
             _contains_invalid_english(value)
             for value in (*translated_paragraphs, what, why, impact)
         ):
@@ -640,13 +649,19 @@ def _validate_narrative_summaries(
     what: str,
     why: str,
     impact: str,
+    target_locale: str = "en",
 ) -> tuple[str, str, str]:
     values = (
         _concise_sentence(what),
         _concise_sentence(why),
         _concise_sentence(impact),
     )
-    if any(_is_placeholder(value) or _contains_invalid_english(value) for value in values):
+    invalid = (
+        any(_is_placeholder(value) or _contains_invalid_english(value) for value in values)
+        if target_locale == "en"
+        else any(_is_placeholder(value) or re.search(r"[가-힣]", value) is None for value in values)
+    )
+    if invalid:
         raise _invalid_output()
     return values
 
