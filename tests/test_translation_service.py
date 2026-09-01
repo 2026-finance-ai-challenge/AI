@@ -244,6 +244,37 @@ def test_news_narrative_repairs_non_english_or_unfinished_summaries_without_retr
     assert responses.calls == 3
 
 
+def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
+    title = "요약 제한"
+    paragraphs = ("회사는 신사업 계획을 발표했다.",)
+    source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
+    long_summary = (
+        "The company announced a detailed new business plan that covers product development "
+        "market expansion hiring partnerships financing operations distribution and customer "
+        "support across several regions. A second sentence must be removed."
+    )
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_paragraphs=("The company announced a new business plan.",),
+            what=long_summary,
+            why="The source does not state a reason.",
+            impact="The source does not state a direct impact.",
+        )
+    )
+
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+        )
+    )
+
+    assert len(result.what.split()) <= 24
+    assert result.what.endswith((".", "…"))
+    assert len(result.what) <= 180
+    assert "second sentence" not in result.what.lower()
+    assert responses.calls == 2
+
+
 def test_news_narrative_rejects_hangul_in_english_output() -> None:
     title = "실적 발표"
     paragraphs = ("매출이 증가했다.",)

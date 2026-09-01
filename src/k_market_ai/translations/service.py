@@ -172,7 +172,7 @@ class TranslationService:
                 or (
                     target_locale.lower().split("-", maxsplit=1)[0] == "en"
                     and (
-                        HANGUL_PATTERN.search(parsed_item.translated_text) is not None
+                        NON_ENGLISH_SCRIPT_PATTERN.search(parsed_item.translated_text) is not None
                         or ROMANIZED_CURRENCY_PATTERN.search(parsed_item.translated_text)
                         is not None
                         or not _contains_required_currency_conversions(
@@ -449,7 +449,11 @@ def _repair_narrative_summaries(
     repaired_impact = (
         _fallback_summary(paragraphs, "impact") if _needs_summary_repair(impact) else impact
     )
-    return repaired_what, repaired_why, repaired_impact
+    return (
+        _concise_sentence(repaired_what),
+        _concise_sentence(repaired_why),
+        _concise_sentence(repaired_impact),
+    )
 
 
 def _is_placeholder(value: str) -> bool:
