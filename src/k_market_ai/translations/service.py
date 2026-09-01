@@ -68,11 +68,7 @@ values. Output English only without Hangul or romanized Korean units such as eok
 transliterate names without an established English form. Do not add facts or commentary. Return
 only the requested schema."""
 
-ENGLISH_ONLY_PATTERN = r"^[^\u3131-\u318e\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7a3]+$"
-EnglishBoundedText = Annotated[
-    str,
-    Field(min_length=1, max_length=120_000, pattern=ENGLISH_ONLY_PATTERN),
-]
+BoundedText = Annotated[str, Field(min_length=1, max_length=120_000)]
 
 
 class _StructuredTitle(BaseModel):
@@ -80,7 +76,7 @@ class _StructuredTitle(BaseModel):
 
     id: str = Field(min_length=1, max_length=100)
     source_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
-    translated_text: EnglishBoundedText = Field(max_length=1_000)
+    translated_text: BoundedText = Field(max_length=1_000)
 
 
 class _StructuredTitleBatch(BaseModel):
@@ -92,7 +88,7 @@ class _StructuredTitleBatch(BaseModel):
 class _StructuredNewsSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    translated_text: EnglishBoundedText = Field(
+    translated_text: BoundedText = Field(
         description="Complete English-only translation of the supplied source fragment."
     )
 
@@ -100,17 +96,17 @@ class _StructuredNewsSegment(BaseModel):
 class _StructuredNewsSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    what: EnglishBoundedText = Field(
+    what: BoundedText = Field(
         min_length=1,
         max_length=180,
         description="One sentence stating what happened, never the label 'What'.",
     )
-    why: EnglishBoundedText = Field(
+    why: BoundedText = Field(
         min_length=1,
         max_length=180,
         description="One source-grounded reason sentence, never the label 'Why'.",
     )
-    impact: EnglishBoundedText = Field(
+    impact: BoundedText = Field(
         min_length=1,
         max_length=180,
         description="One source-grounded impact sentence, never the label 'Impact'.",
@@ -120,9 +116,9 @@ class _StructuredNewsSummary(BaseModel):
 class _StructuredDisclosureSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    translated_heading: EnglishBoundedText | None = Field(default=None, max_length=4_000)
-    translated_text: EnglishBoundedText | None = Field(default=None)
-    translated_table_data_json: EnglishBoundedText | None = Field(
+    translated_heading: BoundedText | None = Field(default=None, max_length=4_000)
+    translated_text: BoundedText | None = Field(default=None)
+    translated_table_data_json: BoundedText | None = Field(
         default=None,
         max_length=500_000,
     )
