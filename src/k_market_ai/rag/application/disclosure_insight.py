@@ -22,9 +22,7 @@ support a useful summary, set sufficient_evidence to false and explain why. Retu
 requested schema."""
 
 HANGUL_PATTERN = re.compile(r"[\u3131-\u318e\uac00-\ud7a3]")
-ROMANIZED_CURRENCY_PATTERN = re.compile(
-    r"\b(?:eok|jo)(?:[ -]?won)?\b|\bman[ -]?won\b", re.I
-)
+ROMANIZED_CURRENCY_PATTERN = re.compile(r"\b(?:eok|jo)(?:[ -]?won)?\b|\bman[ -]?won\b", re.I)
 
 
 @dataclass(frozen=True, slots=True)
