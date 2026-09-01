@@ -217,6 +217,33 @@ def test_news_narrative_repairs_field_label_placeholders_without_retry() -> None
     assert responses.calls == 3
 
 
+def test_news_narrative_repairs_non_english_or_unfinished_summaries_without_retry() -> None:
+    title = "채용 확대"
+    paragraphs = ("회사는 인재 확보를 위해 채용을 확대했다.", "경쟁력을 강화할 계획이다.")
+    source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_paragraphs=(
+                "The company expanded hiring to secure talent.",
+                "It plans to strengthen competitiveness.",
+            ),
+            what="The company expanded hiring to secure talent.",
+            why="The company seeks more talent 高",
+            impact="It plans to strengthen competitiveness",
+        )
+    )
+
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+        )
+    )
+
+    assert result.why == "The source does not state a reason."
+    assert result.impact == "It plans to strengthen competitiveness."
+    assert responses.calls == 3
+
+
 def test_news_narrative_rejects_hangul_in_english_output() -> None:
     title = "실적 발표"
     paragraphs = ("매출이 증가했다.",)
