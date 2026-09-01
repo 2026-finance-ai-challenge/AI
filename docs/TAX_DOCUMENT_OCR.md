@@ -16,9 +16,9 @@ KART의 세무 문서 검증은 하나금융 프로젝트의 `src/hanah_tax_ocr`
 ## 내부 API
 
 - `POST /internal/v1/tax/documents/verify`: 문서 한 건의 OCR·필드·품질 검증
-- `POST /internal/v1/tax/documents/compare`: 세 종류를 한 번씩 받아 개별 결과와 교차검증 결과 반환
+- `POST /internal/v1/tax/documents/compare`: 저장된 세 종류의 개별 검증 결과를 받아 원본 교차검증 규칙 실행
 
-두 API 모두 Backend 전용 서비스 토큰이 필요하다. 원문은 요청 처리 중 임시 파일로만 생성하고 종료 시 삭제한다. 사용자 ID 대신 비가역 안전 식별자만 전달하며 OCR 결과를 정부 진위 확인으로 표현하지 않는다.
+두 API 모두 Backend 전용 서비스 토큰이 필요하다. 개별 OCR의 원문은 요청 처리 중 임시 파일로만 생성하고 종료 시 삭제한다. 교차검증은 이미 저장된 정규화 필드와 개별 판정만 사용하므로 원문을 복호화·재전송·재OCR하지 않는다. 사용자 ID 대신 비가역 안전 식별자만 전달하며 OCR 결과를 정부 진위 확인으로 표현하지 않는다.
 
 ## 재현 검증
 
@@ -29,4 +29,3 @@ uv run python scripts/verify_tax_bundle.py residency.png apostille.png applicati
 ```
 
 배포 이미지와 동일한 Tesseract·Poppler 환경에서 확인하려면 해당 스크립트를 AI 컨테이너 안에서 실행한다.
-

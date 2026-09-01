@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from k_market_ai.api.internal_auth import authenticate_internal
 from k_market_ai.core.errors import AppError
 from k_market_ai.tax.service import (
-    TaxBundleDocument,
+    TaxCachedDocument,
     TaxDocumentFields,
     TaxDocumentIssue,
     TaxDocumentService,
@@ -45,19 +45,26 @@ class TaxVerificationResponse(BaseModel):
     prompt_version: str
 
 
-class TaxBundleDocumentRequest(BaseModel):
+class TaxCachedDocumentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     document_type: Literal["RESIDENCY_CERTIFICATE", "APOSTILLE", "REDUCED_TAX_APPLICATION"]
-    file_name: str = Field(min_length=1, max_length=255)
-    content_type: Literal["application/pdf", "image/jpeg", "image/png"]
-    document_base64: str = Field(min_length=4, max_length=14_000_000)
+    detected_document_type: Literal["RESIDENCY_CERTIFICATE", "APOSTILLE", "REDUCED_TAX_APPLICATION"]
+    verification_status: Literal["VERIFIED", "REVIEW_REQUIRED", "REJECTED"]
+    fields: TaxDocumentFields
+    missing_required_fields: tuple[str, ...]
+    issues: tuple[TaxDocumentIssue, ...]
+    ocr_confidence: float = Field(ge=0, le=1)
+    tamper_risk: float = Field(ge=0, le=1)
+    manual_review_required: bool
+    model: str = Field(min_length=1, max_length=100)
+    prompt_version: str = Field(min_length=1, max_length=100)
 
 
 class TaxBundleVerificationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    documents: tuple[TaxBundleDocumentRequest, ...] = Field(min_length=3, max_length=3)
+    documents: tuple[TaxCachedDocumentRequest, ...] = Field(min_length=3, max_length=3)
     expected_residency_country: str = Field(pattern=r"^[A-Z]{2}$")
     investor_type: Literal["INDIVIDUAL", "CORPORATE"]
     safety_identifier: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -119,13 +126,20 @@ async def compare_documents(
     tax_service: Annotated[TaxDocumentService, Depends(service)],
     _: Annotated[None, Depends(authenticate_internal)],
 ) -> TaxBundleVerificationResponse:
-    result = await tax_service.verify_bundle(
+    result = await tax_service.compare_cached(
         documents=tuple(
-            TaxBundleDocument(
+            TaxCachedDocument(
                 document_type=document.document_type,
-                file_name=document.file_name,
-                content_type=document.content_type,
-                document_base64=document.document_base64,
+                detected_document_type=document.detected_document_type,
+                verification_status=document.verification_status,
+                fields=document.fields,
+                missing_required_fields=document.missing_required_fields,
+                issues=document.issues,
+                ocr_confidence=document.ocr_confidence,
+                tamper_risk=document.tamper_risk,
+                manual_review_required=document.manual_review_required,
+                model=document.model,
+                prompt_version=document.prompt_version,
             )
             for document in body.documents
         ),
