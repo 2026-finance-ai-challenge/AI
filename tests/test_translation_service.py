@@ -88,7 +88,7 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
                     id="T1",
                     source_hash=source.source_hash,
                     translated_text=(
-                        "Target Price at KRW 2.4 million After Raising KRW 11.1 billion"
+                        "Target Price at __KRW_AMOUNT_0__ After Raising __KRW_AMOUNT_1__"
                     ),
                 ),
             )
@@ -98,9 +98,12 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
     result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
 
     payload = json.loads(str(responses.arguments["input"]))
-    assert payload["items"][0]["required_currency_conversions"] == [
-        {"source_text": "240만원", "english_text": "KRW 2.4 million"},
-        {"source_text": "111억원", "english_text": "KRW 11.1 billion"},
+    assert payload["items"][0]["source_text"] == (
+        "목표가 __KRW_AMOUNT_0__, 투자유치 __KRW_AMOUNT_1__"
+    )
+    assert payload["items"][0]["protected_currency_tokens"] == [
+        "__KRW_AMOUNT_0__",
+        "__KRW_AMOUNT_1__",
     ]
     assert result.items[0].translated_text.startswith("Target Price")
 
@@ -343,14 +346,14 @@ def test_many_short_news_paragraphs_keep_one_translation_per_paragraph() -> None
     assert responses.calls == 42
 
 
-def test_disclosure_section_rejects_changed_table_structure() -> None:
+def test_disclosure_section_rejects_missing_table_items() -> None:
     table = json.dumps({"rows": [["매출", 100]]}, ensure_ascii=False)
     source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
     responses = FakeResponses(
         SimpleNamespace(
             translated_heading="Financial Information",
             translated_text="Revenue status",
-            translated_table_data_json=json.dumps({"rows": [["Revenue", 101]]}),
+            translated_table_items=(),
         )
     )
 
@@ -372,12 +375,11 @@ def test_disclosure_section_rejects_changed_table_structure() -> None:
 def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None:
     table = json.dumps({"rows": [["매출", 100, True, None]]}, ensure_ascii=False)
     source_hash = _hash(canonical_disclosure_section("재무 정보", "매출 현황", table))
-    translated_table = json.dumps({"rows": [["Revenue", 100, True, None]]})
     responses = FakeResponses(
         SimpleNamespace(
             translated_heading="Financial Information",
             translated_text="Revenue status",
-            translated_table_data_json=translated_table,
+            translated_table_items=(SimpleNamespace(id="value-0", translated_text="Revenue"),),
         )
     )
 
@@ -392,7 +394,9 @@ def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None
         )
     )
 
-    assert result.translated_table_data_json == translated_table
+    assert json.loads(result.translated_table_data_json or "null") == {
+        "rows": [["Revenue", 100, True, None]]
+    }
     assert responses.arguments["timeout"] == 90.0
     assert responses.arguments["max_output_tokens"] == 128_000
 
@@ -403,7 +407,7 @@ def test_disclosure_section_rejects_hangul_in_english_output() -> None:
         SimpleNamespace(
             translated_heading="한국항공우주 / Contract",
             translated_text="English body",
-            translated_table_data_json=None,
+            translated_table_items=None,
         )
     )
 
