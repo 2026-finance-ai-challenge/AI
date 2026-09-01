@@ -212,11 +212,11 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_long_news_narrative_translates_in_bounded_chunks_and_summarizes_once() -> None:
+def test_long_news_narrative_uses_one_structured_request() -> None:
     title = "장문 기사"
     paragraphs = ("가" * 10_000, "나" * 10_000, "다" * 2_000)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
-    responses = ChunkedNewsResponses()
+    responses = SingleNewsResponse()
 
     result = asyncio.run(
         _service(responses).translate_news_narrative(
@@ -225,15 +225,15 @@ def test_long_news_narrative_translates_in_bounded_chunks_and_summarizes_once() 
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.summary_calls == 1
-    assert responses.translation_calls == 2
+    assert responses.calls == 1
+    assert responses.arguments["max_output_tokens"] == 100_000
 
 
-def test_many_short_news_paragraphs_use_bounded_parallel_chunks() -> None:
+def test_many_short_news_paragraphs_use_one_structured_request() -> None:
     title = "다문단 기사"
     paragraphs = tuple(f"문단 {index} " + "가" * 80 for index in range(41))
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
-    responses = ChunkedNewsResponses()
+    responses = SingleNewsResponse()
 
     result = asyncio.run(
         _service(responses).translate_news_narrative(
@@ -242,8 +242,7 @@ def test_many_short_news_paragraphs_use_bounded_parallel_chunks() -> None:
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.summary_calls == 1
-    assert responses.translation_calls == 3
+    assert responses.calls == 1
 
 
 def test_disclosure_section_rejects_changed_table_structure() -> None:
@@ -338,33 +337,29 @@ class FailingResponses:
         raise self.exception
 
 
-class ChunkedNewsResponses:
+class SingleNewsResponse:
     def __init__(self) -> None:
-        self.translation_calls = 0
-        self.summary_calls = 0
+        self.calls = 0
+        self.arguments: dict[str, object] = {}
 
     async def parse(self, **arguments: object) -> SimpleNamespace:
+        self.calls += 1
+        self.arguments = arguments
         payload = json.loads(str(arguments["input"]))
-        if "source_excerpt" in payload:
-            self.summary_calls += 1
-            parsed = SimpleNamespace(
-                what="The company announced an update.",
-                why="The source states the reason.",
-                impact="The source describes a potential impact.",
-            )
-        else:
-            self.translation_calls += 1
-            parsed = SimpleNamespace(
-                translated_paragraphs=tuple(
-                    f"Translated paragraph {index + 1}"
-                    for index, _ in enumerate(payload["source_paragraphs"])
-                )
-            )
+        parsed = SimpleNamespace(
+            translated_paragraphs=tuple(
+                f"Translated paragraph {index + 1}"
+                for index, _ in enumerate(payload["source_paragraphs"])
+            ),
+            what="The company announced an update.",
+            why="The source states the reason.",
+            impact="The source describes a potential impact.",
+        )
         return SimpleNamespace(output_parsed=parsed)
 
 
 def _service(
-    responses: FakeResponses | FailingResponses | ChunkedNewsResponses,
+    responses: FakeResponses | FailingResponses | SingleNewsResponse,
 ) -> TranslationService:
     return TranslationService(
         SimpleNamespace(responses=responses),
