@@ -14,7 +14,7 @@ from k_market_ai.translations.service import (
     TranslationService,
     _currency_conversions,
     _restore_currency_amounts,
-    _StructuredNewsSegment,
+    _StructuredNewsSegmentItem,
     canonical_disclosure_section,
     canonical_news_source,
 )
@@ -116,6 +116,14 @@ def test_korean_currency_conversion_preserves_round_and_compound_units() -> None
         {"source_text": "169조6022억원", "english_text": "KRW 169.6022 trillion"},
         {"source_text": "4000억원", "english_text": "KRW 400 billion"},
         {"source_text": "25만4000원", "english_text": "KRW 254,000"},
+    ]
+
+
+def test_korean_currency_conversion_ignores_share_counts_and_foreign_currency() -> None:
+    source = "3301만 6411주, 10만 8590주, 14억 6296만스위스프랑, 투자 1조1000억"
+
+    assert _currency_conversions(source) == [
+        {"source_text": "1조1000억", "english_text": "KRW 1.1 trillion"}
     ]
 
 
@@ -294,7 +302,7 @@ def test_news_narrative_rejects_field_label_placeholders_without_fallback() -> N
         )
 
     assert captured.value.code == "AI_INVALID_OUTPUT"
-    assert responses.calls == 3
+    assert responses.calls == 2
 
 
 def test_news_narrative_rejects_non_english_summary_without_fallback() -> None:
@@ -321,7 +329,7 @@ def test_news_narrative_rejects_non_english_summary_without_fallback() -> None:
         )
 
     assert captured.value.code == "AI_INVALID_OUTPUT"
-    assert responses.calls == 3
+    assert responses.calls == 2
 
 
 def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
@@ -378,15 +386,15 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_news_segment_schema_accepts_provider_text_for_service_validation() -> None:
-    parsed = _StructuredNewsSegment.model_validate(
-        {"translated_text": "The company strengthened 전문 역량."}
+def test_news_segment_item_schema_accepts_provider_text_for_service_validation() -> None:
+    parsed = _StructuredNewsSegmentItem.model_validate(
+        {"id": "segment-0", "translated_text": "The company strengthened 전문 역량."}
     )
 
     assert parsed.translated_text.endswith("역량.")
 
 
-def test_long_news_narrative_uses_one_request_per_bounded_segment() -> None:
+def test_long_news_narrative_batches_bounded_segments() -> None:
     title = "장문 기사"
     paragraphs = ("가" * 10_000, "나" * 10_000, "다" * 2_000)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -399,13 +407,13 @@ def test_long_news_narrative_uses_one_request_per_bounded_segment() -> None:
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.calls == 6
+    assert responses.calls == 2
     assert {arguments["max_output_tokens"] for arguments in responses.history} == {
         128_000,
     }
 
 
-def test_many_short_news_paragraphs_keep_one_translation_per_paragraph() -> None:
+def test_many_short_news_paragraphs_use_bounded_batches() -> None:
     title = "다문단 기사"
     paragraphs = tuple(f"문단 {index} " + "가" * 80 for index in range(41))
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -418,7 +426,7 @@ def test_many_short_news_paragraphs_keep_one_translation_per_paragraph() -> None
     )
 
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.calls == 42
+    assert responses.calls == 3
 
 
 def test_disclosure_section_rejects_missing_table_items_without_fallback() -> None:
@@ -516,10 +524,18 @@ class FakeResponses:
         self.calls += 1
         self.arguments = arguments
         payload = json.loads(str(arguments["input"]))
-        if "source_text" in payload and hasattr(self.parsed, "translated_paragraphs"):
+        if "items" in payload and hasattr(self.parsed, "translated_paragraphs"):
             return SimpleNamespace(
                 output_parsed=SimpleNamespace(
-                    translated_text=self.parsed.translated_paragraphs[payload["segment_index"]]
+                    items=tuple(
+                        SimpleNamespace(
+                            id=item["id"],
+                            translated_text=self.parsed.translated_paragraphs[
+                                int(item["id"].removeprefix("segment-"))
+                            ],
+                        )
+                        for item in payload["items"]
+                    )
                 )
             )
         if "translated_paragraphs" in payload and hasattr(self.parsed, "what"):
@@ -553,9 +569,17 @@ class SingleNewsResponse:
         self.arguments = arguments
         self.history.append(arguments)
         payload = json.loads(str(arguments["input"]))
-        if "source_text" in payload:
+        if "items" in payload:
             parsed = SimpleNamespace(
-                translated_text=f"Translated segment {payload['segment_index'] + 1}."
+                items=tuple(
+                    SimpleNamespace(
+                        id=item["id"],
+                        translated_text=(
+                            f"Translated segment {int(item['id'].removeprefix('segment-')) + 1}."
+                        ),
+                    )
+                    for item in payload["items"]
+                )
             )
         else:
             parsed = SimpleNamespace(
