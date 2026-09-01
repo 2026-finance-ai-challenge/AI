@@ -241,6 +241,35 @@ def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
     assert responses.arguments["timeout"] == 180.0
 
 
+def test_korean_news_narrative_uses_original_body_and_generates_korean_summary() -> None:
+    title = "실적 발표"
+    paragraphs = ("매출이 증가했다.", "회사는 해외 수요를 원인으로 설명했다.")
+    source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
+    responses = FakeResponses(
+        SimpleNamespace(
+            what="회사 매출이 증가했다.",
+            why="해외 수요가 증가했다.",
+            impact="향후 실적 개선이 예상된다.",
+        )
+    )
+
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash,
+            title,
+            paragraphs,
+            "FULL_ARTICLE",
+            "ko",
+            "news-v10",
+        )
+    )
+
+    assert result.translated_paragraphs == paragraphs
+    assert result.target_locale == "ko"
+    assert result.what == "회사 매출이 증가했다."
+    assert responses.calls == 1
+
+
 def test_news_narrative_rejects_field_label_placeholders_without_fallback() -> None:
     title = "노선 확대"
     paragraphs = ("회사는 가을 수요에 대응해 노선을 확대했다.", "경쟁력을 강화할 계획이다.")

@@ -1,9 +1,9 @@
 # 번역 생성과 다국어 공시 RAG 기준
 
-- 상태: AI 구조화 생성 API 구현 완료, Backend 영속 캐시 연동 진행 중
-- 기준일: 2026-08-24
+- 상태: AI 구조화 생성·Backend 영속 캐시 연동 완료
+- 기준일: 2026-09-02
 - 원문 언어: 한국어
-- 출력 언어: 영어
+- 출력 언어: 영어, 한국어 뉴스 Insight
 
 AI 서비스는 데이터가 수집될 때마다 본문 전체를 번역하지 않는다. 제목처럼 목록에 항상 필요한 짧은 텍스트는 제한된 배치로 비동기 생성하고, 뉴스 본문·What/Why/Impact와 공시 섹션은 Backend가 최초 사용 요청을 검증한 뒤 생성한다. 영속 캐시, 작업 상태, 동시성 제어와 비용 한도는 Backend가 관리하며 AI 서비스는 구조화 생성과 언어 계약만 담당한다.
 
@@ -12,7 +12,7 @@ AI 서비스는 데이터가 수집될 때마다 본문 전체를 번역하지 �
 | 기능 | AI 입력 | AI 출력 | 호출 시점 |
 | --- | --- | --- | --- |
 | 제목 번역 | 해시와 연결된 고유 한국어 제목 배치 | 입력 ID별 영어 제목 | Backend 비동기 제목 작업 |
-| 뉴스 번역·Insight | 제공 권한이 확인된 기사 본문 또는 검색 요약 | 문단 순서 보존 영어 번역, What/Why/Impact | 사용자 최초 상세·Insight 요청 |
+| 뉴스 번역·Insight | 제공 권한이 확인된 기사 본문 | EN: 문단 순서 보존 번역·요약, KR: 원문 기반 요약 | 홈 호버 또는 상세 최초 요청 |
 | 공시 섹션 번역 | 접수번호·문서 버전으로 검증된 한 섹션 | 구조·숫자·표 셀을 보존한 영어 번역 | 사용자 최초 섹션 번역 요청 |
 | 공시 RAG | 영어 질문, 한글 공시 검색 근거 | 근거 고정 영어 답변·인용 ID | 사용자 질문 |
 
@@ -27,7 +27,7 @@ AI 서비스는 데이터가 수집될 때마다 본문 전체를 번역하지 �
 | Method | Path | 설명 |
 | --- | --- | --- |
 | `POST` | `/internal/v1/translations/titles` | 제한된 고유 제목 `ko→en` 배치 번역 |
-| `POST` | `/internal/v1/news/narratives` | 한 기사 원문 버전의 영어 번역·What/Why/Impact 생성 |
+| `POST` | `/internal/v1/news/narratives` | `target_locale=en|ko`별 본문·What/Why/Impact 생성 |
 | `POST` | `/internal/v1/disclosures/section-translations` | 검증된 한 공시 섹션의 영어 번역 |
 | `POST` | `/internal/v1/disclosures/{receiptNumber}/questions` | 한글 원문 검색 근거 기반 영어 RAG 답변 |
 
