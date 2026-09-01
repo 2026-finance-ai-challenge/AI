@@ -189,6 +189,29 @@ def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
     assert responses.arguments["timeout"] == 60.0
 
 
+def test_news_narrative_rejects_hangul_in_english_output() -> None:
+    title = "실적 발표"
+    paragraphs = ("매출이 증가했다.",)
+    source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_paragraphs=("매출 increased.",),
+            what="Revenue increased.",
+            why="The source does not state a reason.",
+            impact="The source does not state an impact.",
+        )
+    )
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
+            )
+        )
+
+    assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
 def test_long_news_narrative_translates_in_bounded_chunks_and_summarizes_once() -> None:
     title = "장문 기사"
     paragraphs = ("가" * 10_000, "나" * 10_000, "다" * 2_000)
@@ -201,7 +224,7 @@ def test_long_news_narrative_translates_in_bounded_chunks_and_summarizes_once() 
         )
     )
 
-    assert result.translated_paragraphs == tuple(f"EN:{item}" for item in paragraphs)
+    assert len(result.translated_paragraphs) == len(paragraphs)
     assert responses.summary_calls == 1
     assert responses.translation_calls == 2
 
@@ -218,7 +241,7 @@ def test_many_short_news_paragraphs_use_bounded_parallel_chunks() -> None:
         )
     )
 
-    assert result.translated_paragraphs == tuple(f"EN:{item}" for item in paragraphs)
+    assert len(result.translated_paragraphs) == len(paragraphs)
     assert responses.summary_calls == 1
     assert responses.translation_calls == 3
 
@@ -276,6 +299,26 @@ def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None
     assert responses.arguments["timeout"] == 90.0
 
 
+def test_disclosure_section_rejects_hangul_in_english_output() -> None:
+    source_hash = _hash(canonical_disclosure_section("제목", "본문", None))
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_heading="한국항공우주 / Contract",
+            translated_text="English body",
+            translated_table_data_json=None,
+        )
+    )
+
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_disclosure_section(
+                source_hash, "제목", "본문", None, "en", "section-v1"
+            )
+        )
+
+    assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
 class FakeResponses:
     def __init__(self, parsed: object) -> None:
         self.parsed = parsed
@@ -313,7 +356,8 @@ class ChunkedNewsResponses:
             self.translation_calls += 1
             parsed = SimpleNamespace(
                 translated_paragraphs=tuple(
-                    f"EN:{paragraph}" for paragraph in payload["source_paragraphs"]
+                    f"Translated paragraph {index + 1}"
+                    for index, _ in enumerate(payload["source_paragraphs"])
                 )
             )
         return SimpleNamespace(output_parsed=parsed)
