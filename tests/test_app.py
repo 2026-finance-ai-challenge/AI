@@ -24,6 +24,8 @@ from k_market_ai.peers.service import (
 from k_market_ai.rag.application.disclosure_insight import DisclosureInsight
 from k_market_ai.rag.domain.models import Citation, RagAnswer
 from k_market_ai.tax.service import (
+    TaxBundleResult,
+    TaxCachedDocument,
     TaxDocumentFields,
     TaxDocumentIssue,
     TaxVerificationResult,
@@ -334,6 +336,69 @@ def test_tax_document_endpoint_requires_token_and_returns_structured_verificatio
     assert service.safety_identifier == "c" * 64
 
 
+def test_tax_comparison_endpoint_accepts_cached_results_without_document_content() -> None:
+    service_token = str(uuid4())
+    service = FakeTaxDocumentService()
+    app = create_app(
+        Settings(
+            environment="test",
+            allowed_hosts=["testserver"],
+            service_token=service_token,
+        ),
+        tax_document_service=service,
+    )
+    request_body = {
+        "documents": [
+            _cached_tax_request("RESIDENCY_CERTIFICATE", "Maria L. Chen", "US", None),
+            _cached_tax_request("APOSTILLE", "Chong U Choi", None, None),
+            _cached_tax_request("REDUCED_TAX_APPLICATION", "Maria L Chen", None, "US"),
+        ],
+        "expected_residency_country": "US",
+        "investor_type": "INDIVIDUAL",
+        "safety_identifier": "d" * 64,
+    }
+
+    with TestClient(app) as client:
+        compared = client.post(
+            "/internal/v1/tax/documents/compare",
+            headers={"authorization": f"Bearer {service_token}"},
+            json=request_body,
+        )
+
+    assert compared.status_code == 200
+    assert compared.json()["cross_check"]["matched"] is True
+    assert "document_base64" not in compared.request.content.decode()
+    assert service.safety_identifier == "d" * 64
+
+
+def _cached_tax_request(
+    document_type: str,
+    holder_name: str,
+    residency_country: str | None,
+    treaty_country: str | None,
+) -> dict[str, object]:
+    return {
+        "document_type": document_type,
+        "detected_document_type": document_type,
+        "verification_status": "VERIFIED",
+        "fields": {
+            "holder_name": holder_name,
+            "residency_country": residency_country,
+            "document_number": "987-65-4321",
+            "apostille_country": "US" if document_type == "APOSTILLE" else None,
+            "treaty_country": treaty_country,
+            "investor_type": ("INDIVIDUAL" if document_type == "REDUCED_TAX_APPLICATION" else None),
+        },
+        "missing_required_fields": [],
+        "issues": [],
+        "ocr_confidence": 0.95,
+        "tamper_risk": 0.05,
+        "manual_review_required": False,
+        "model": "test-tax-model",
+        "prompt_version": "tax-document-test-v1",
+    }
+
+
 def test_global_peer_endpoint_requires_token_and_returns_grounded_comparison() -> None:
     service_token = str(uuid4())
     service = FakeGlobalPeerService()
@@ -563,6 +628,44 @@ class FakeTaxDocumentService:
             manual_review_required=False,
             model="test-tax-model",
             prompt_version="tax-document-test-v1",
+        )
+
+    async def compare_cached(
+        self,
+        documents: tuple[TaxCachedDocument, ...],
+        expected_residency_country: str,
+        investor_type: str,
+        safety_identifier: str,
+    ) -> TaxBundleResult:
+        self.safety_identifier = safety_identifier
+        assert expected_residency_country == "US"
+        assert investor_type == "INDIVIDUAL"
+        assert len(documents) == 3
+        assert {document.document_type for document in documents} == {
+            "RESIDENCY_CERTIFICATE",
+            "APOSTILLE",
+            "REDUCED_TAX_APPLICATION",
+        }
+        return TaxBundleResult(
+            verification_status="VERIFIED",
+            findings=(),
+            cross_check={"matched": True, "reason": None},
+            documents=tuple(
+                TaxVerificationResult(
+                    detected_document_type=document.detected_document_type,
+                    verification_status=document.verification_status,
+                    fields=document.fields,
+                    missing_required_fields=document.missing_required_fields,
+                    issues=document.issues,
+                    ocr_confidence=document.ocr_confidence,
+                    tamper_risk=document.tamper_risk,
+                    manual_review_required=document.manual_review_required,
+                    model=document.model,
+                    prompt_version=document.prompt_version,
+                )
+                for document in documents
+            ),
+            model="test-tax-model",
         )
 
 

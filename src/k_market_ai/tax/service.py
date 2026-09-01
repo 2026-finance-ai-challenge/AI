@@ -82,6 +82,21 @@ class TaxBundleResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TaxCachedDocument:
+    document_type: ApiDocumentType
+    detected_document_type: ApiDocumentType
+    verification_status: str
+    fields: TaxDocumentFields
+    missing_required_fields: tuple[str, ...]
+    issues: tuple[TaxDocumentIssue, ...]
+    ocr_confidence: float
+    tamper_risk: float
+    manual_review_required: bool
+    model: str
+    prompt_version: str
+
+
+@dataclass(frozen=True, slots=True)
 class _PipelineDocument:
     api_type: ApiDocumentType
     extracted: ExtractedDocument
@@ -167,6 +182,61 @@ class TaxDocumentService:
             findings=tuple(_issue(finding) for finding in review.findings),
             cross_check=review.cross_check,
             documents=per_document,
+            model=self._model,
+        )
+
+    async def compare_cached(
+        self,
+        documents: tuple[TaxCachedDocument, ...],
+        expected_residency_country: str,
+        investor_type: str,
+        safety_identifier: str,
+    ) -> TaxBundleResult:
+        del safety_identifier
+        required = {
+            "RESIDENCY_CERTIFICATE",
+            "APOSTILLE",
+            "REDUCED_TAX_APPLICATION",
+        }
+        supplied = {document.document_type for document in documents}
+        detected = {document.detected_document_type for document in documents}
+        if len(documents) != 3 or supplied != required or detected != required:
+            raise AppError(
+                code="INVALID_TAX_DOCUMENT_BUNDLE",
+                message="Exactly one verified result of each required type is required.",
+                status_code=400,
+            )
+        indexed = {document.document_type: document for document in documents}
+        residency = indexed["RESIDENCY_CERTIFICATE"]
+        withholding = indexed["REDUCED_TAX_APPLICATION"]
+        if residency.fields.residency_country not in {None, expected_residency_country}:
+            raise AppError(
+                code="INVALID_TAX_DOCUMENT_BUNDLE",
+                message="The cached residence country does not match the request.",
+                status_code=400,
+            )
+        if withholding.fields.treaty_country not in {None, expected_residency_country}:
+            raise AppError(
+                code="INVALID_TAX_DOCUMENT_BUNDLE",
+                message="The cached treaty country does not match the request.",
+                status_code=400,
+            )
+        if withholding.fields.investor_type not in {None, investor_type}:
+            raise AppError(
+                code="INVALID_TAX_DOCUMENT_BUNDLE",
+                message="The cached investor type does not match the request.",
+                status_code=400,
+            )
+        review = TaxDocumentReviewer().cross_check(
+            _cached_extraction(residency),
+            _cached_extraction(withholding),
+        )
+        status = _cached_bundle_status(documents, review)
+        return TaxBundleResult(
+            verification_status=status,
+            findings=tuple(_issue(finding) for finding in review.findings),
+            cross_check=review.cross_check,
+            documents=tuple(_cached_verification(document) for document in documents),
             model=self._model,
         )
 
@@ -272,6 +342,64 @@ def _model_type(document_type: ApiDocumentType) -> DocumentType:
         "APOSTILLE": DocumentType.APOSTILLE,
         "REDUCED_TAX_APPLICATION": DocumentType.WITHHOLDING_TAX_FORM,
     }[document_type]
+
+
+def _cached_extraction(document: TaxCachedDocument) -> ExtractedDocument:
+    fields = document.fields
+    if document.document_type == "RESIDENCY_CERTIFICATE":
+        source = {
+            "taxpayer_name": fields.holder_name,
+            "tin": fields.document_number,
+            "residency_country": _country_name(fields.residency_country),
+            "residency_country_code": fields.residency_country,
+        }
+        document_type = DocumentType.RESIDENCY_CERTIFICATE
+    else:
+        source = {
+            "first_name": fields.holder_name,
+            "middle_name": None,
+            "last_name": None,
+            "tin": fields.document_number,
+            "residency_country": _country_name(fields.treaty_country),
+            "residency_country_code": fields.treaty_country,
+        }
+        document_type = DocumentType.WITHHOLDING_TAX_FORM
+    return ExtractedDocument(
+        document_type=document_type,
+        source_path="cached-verification-result",
+        fields=source,
+    )
+
+
+def _country_name(country_code: str | None) -> str | None:
+    return "United States of America" if country_code == "US" else country_code
+
+
+def _cached_bundle_status(
+    documents: tuple[TaxCachedDocument, ...],
+    review: ReviewResult,
+) -> str:
+    statuses = {document.verification_status for document in documents}
+    if "REJECTED" in statuses or review.status == ReviewStatus.REJECT:
+        return "REJECTED"
+    if statuses != {"VERIFIED"} or review.status != ReviewStatus.PASS:
+        return "REVIEW_REQUIRED"
+    return "VERIFIED"
+
+
+def _cached_verification(document: TaxCachedDocument) -> TaxVerificationResult:
+    return TaxVerificationResult(
+        detected_document_type=document.detected_document_type,
+        verification_status=document.verification_status,
+        fields=document.fields,
+        missing_required_fields=document.missing_required_fields,
+        issues=document.issues,
+        ocr_confidence=document.ocr_confidence,
+        tamper_risk=document.tamper_risk,
+        manual_review_required=document.manual_review_required,
+        model=document.model,
+        prompt_version=document.prompt_version,
+    )
 
 
 def _safe_suffix(file_name: str, content_type: str) -> str:
