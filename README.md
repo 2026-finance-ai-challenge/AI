@@ -143,10 +143,12 @@ Backend 전용 내부 API 범위는 다음과 같다.
 - `POST /internal/v1/news/terms/explanations`: 검증 근거 기반 금융 용어 해설
 - 공시 What/Why/Impact 요약과 공시별 RAG 답변
 - 서버 조회 도구 결과에 고정된 범용 시장 Agent 답변
-- 세무 문서 OCR·필드·일관성 검증
+- 세무 문서 로컬 OCR·문서별 필드·일관성 검증
 - 검증 참고 카탈로그 기반 글로벌 피어 비교
 
 생성형 분석과 공시 질의응답을 활성화하려면 `KMARKET_AI_DATABASE_URL`, `KMARKET_AI_SERVICE_TOKEN`, `OPENAI_API_KEY`가 모두 필요하다. API 서버가 생성 요청을 처리하고, 색인 워커는 DB 작업 큐만 처리하므로 공시 RAG를 사용하려면 두 프로세스를 각각 실행해야 한다. Backend와 AI의 `KMARKET_AI_SERVICE_TOKEN` 값은 같아야 한다.
+
+세무 문서 검증은 OpenAI API를 호출하지 않는다. 컨테이너에 고정 설치한 Tesseract와 Poppler로 최대 5쪽을 OCR한 뒤 문서 유형별 필수 필드와 선택 국가를 규칙으로 교차 검증한다. OCR 실행 환경, 파일 서명, 확장자, 판독 결과 중 하나라도 유효하지 않으면 성공 결과를 만들지 않는다. 응답의 `tamperRisk`는 OCR 판독 품질 위험이며 정부 원본 진위 확인을 의미하지 않는다.
 
 뉴스 분류까지 활성화하려면 검증된 모델 번들을 `KMARKET_AI_MODEL_BUNDLE_ROOT`에 읽기 전용으로 마운트해야 한다. 기본 허용 revision은 `ab82ccc51cb096872f9a110a85c027a4158a147f`이며 `KMARKET_AI_MODEL_BUNDLE_COMMIT`으로 명시한다. 번들 또는 모델 파일이 다르면 뉴스 분석만 fail-closed 처리되고 생성 모델로 대체하지 않는다.
 
