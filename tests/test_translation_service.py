@@ -6,12 +6,14 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from openai import APITimeoutError, OpenAIError, RateLimitError
+from pydantic import ValidationError
 
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
     TranslationService,
+    _StructuredNewsSegment,
     canonical_disclosure_section,
     canonical_news_source,
 )
@@ -296,6 +298,18 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
         )
 
     assert captured.value.code == "AI_INVALID_OUTPUT"
+
+
+def test_news_segment_schema_blocks_non_english_script_during_generation() -> None:
+    with pytest.raises(ValidationError):
+        _StructuredNewsSegment.model_validate(
+            {"translated_text": "The company strengthened 전문 역량."}
+        )
+
+    parsed = _StructuredNewsSegment.model_validate(
+        {"translated_text": "The company strengthened professional capabilities."}
+    )
+    assert parsed.translated_text.endswith("capabilities.")
 
 
 def test_long_news_narrative_uses_one_request_per_bounded_segment() -> None:
