@@ -6,7 +6,10 @@ from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
 from k_market_ai.tax.document_model.schemas import DocumentType, ExtractedDocument
 from k_market_ai.tax.service import (
+    ApiDocumentType,
     TaxBundleDocument,
+    TaxCachedDocument,
+    TaxDocumentFields,
     TaxDocumentService,
     _PipelineDocument,
 )
@@ -191,3 +194,101 @@ async def test_bundle_runs_original_cross_document_reviewer(
     assert result.verification_status == "VERIFIED"
     assert result.cross_check["matched"] is True
     assert len(result.documents) == 3
+
+
+@pytest.mark.anyio
+async def test_cached_comparison_reuses_results_without_running_ocr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TaxDocumentService(Settings())
+
+    def unexpected_ocr(*_: object) -> _PipelineDocument:
+        raise AssertionError("cached comparison must not run OCR")
+
+    monkeypatch.setattr(service, "_process_document", unexpected_ocr)
+    documents = (
+        _cached_document(
+            "RESIDENCY_CERTIFICATE",
+            TaxDocumentFields(
+                holder_name="MARIA L. CHEN",
+                residency_country="US",
+                document_number="987-65-4321",
+            ),
+        ),
+        _cached_document(
+            "APOSTILLE",
+            TaxDocumentFields(
+                holder_name="CHONG U CHOI",
+                apostille_country="US",
+                document_number="1185973223",
+            ),
+        ),
+        _cached_document(
+            "REDUCED_TAX_APPLICATION",
+            TaxDocumentFields(
+                holder_name="MARIA L CHEN",
+                treaty_country="US",
+                document_number="987-65-4321",
+                investor_type="INDIVIDUAL",
+            ),
+        ),
+    )
+
+    result = await service.compare_cached(documents, "US", "INDIVIDUAL", "e" * 64)
+
+    assert result.verification_status == "VERIFIED"
+    assert result.cross_check == {"matched": True, "reason": None}
+    assert len(result.documents) == 3
+
+
+@pytest.mark.anyio
+async def test_cached_comparison_rejects_cross_document_mismatch() -> None:
+    service = TaxDocumentService(Settings())
+    documents = (
+        _cached_document(
+            "RESIDENCY_CERTIFICATE",
+            TaxDocumentFields(
+                holder_name="MARIA L. CHEN",
+                residency_country="US",
+                document_number="987-65-4321",
+            ),
+        ),
+        _cached_document(
+            "APOSTILLE",
+            TaxDocumentFields(apostille_country="US", document_number="1185973223"),
+        ),
+        _cached_document(
+            "REDUCED_TAX_APPLICATION",
+            TaxDocumentFields(
+                holder_name="ANOTHER PERSON",
+                treaty_country="US",
+                document_number="111-22-3333",
+                investor_type="INDIVIDUAL",
+            ),
+        ),
+    )
+
+    result = await service.compare_cached(documents, "US", "INDIVIDUAL", "f" * 64)
+
+    assert result.verification_status == "REJECTED"
+    assert result.cross_check["matched"] is False
+    assert {finding.code for finding in result.findings} == {"REQUIRED_CROSS_CHECK_MISMATCH"}
+
+
+def _cached_document(
+    document_type: ApiDocumentType,
+    fields: TaxDocumentFields,
+) -> TaxCachedDocument:
+    return TaxCachedDocument(
+        document_type=document_type,
+        detected_document_type=document_type,
+        verification_status="VERIFIED",
+        fields=fields,
+        missing_required_fields=(),
+        issues=(),
+        ocr_confidence=0.95,
+        tamper_risk=0.05,
+        manual_review_required=False,
+        model="kmarket-tax-document-ocr-runtime-v2",
+        prompt_version="tax-document-v2",
+    )

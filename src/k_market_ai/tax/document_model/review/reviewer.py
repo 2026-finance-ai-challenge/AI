@@ -47,6 +47,25 @@ class TaxDocumentReviewer:
             cross_check={key: value for key, value in cross_check.items() if key != "findings"},
         )
 
+    def cross_check(
+        self,
+        residency_document: ExtractedDocument,
+        withholding_document: ExtractedDocument,
+    ) -> ReviewResult:
+        """Run only the original cross-document rules against cached OCR results."""
+        cross_check = self._cross_check(residency_document, withholding_document)
+        findings = cross_check["findings"]
+        status = ReviewStatus.PASS
+        if any(item.code.startswith("required_") for item in findings):
+            status = ReviewStatus.REJECT
+        elif findings or cross_check["matched"] is not True:
+            status = ReviewStatus.NEEDS_REVIEW
+        return ReviewResult(
+            status=status,
+            findings=findings,
+            cross_check={key: value for key, value in cross_check.items() if key != "findings"},
+        )
+
     def _review_residency_certificate(self, document: ExtractedDocument) -> list[ReviewFinding]:
         findings: list[ReviewFinding] = []
         if not document.fields.get("taxpayer_name"):
