@@ -65,7 +65,11 @@ values. Output English only without Hangul or romanized Korean units such as eok
 transliterate names without an established English form. Do not add facts or commentary. Return
 only the requested schema."""
 
-BoundedText = Annotated[str, Field(min_length=1, max_length=120_000)]
+ENGLISH_ONLY_PATTERN = r"^[^\u3131-\u318e\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7a3]+$"
+EnglishBoundedText = Annotated[
+    str,
+    Field(min_length=1, max_length=120_000, pattern=ENGLISH_ONLY_PATTERN),
+]
 
 
 class _StructuredTitle(BaseModel):
@@ -85,7 +89,7 @@ class _StructuredTitleBatch(BaseModel):
 class _StructuredNewsSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    translated_text: BoundedText = Field(
+    translated_text: EnglishBoundedText = Field(
         description="Complete English-only translation of the supplied source fragment."
     )
 
