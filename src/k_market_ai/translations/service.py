@@ -37,9 +37,18 @@ NON_ENGLISH_SCRIPT_PATTERN = re.compile(
     r"[\u3131-\u318e\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7a3]"
 )
 ROMANIZED_CURRENCY_PATTERN = re.compile(r"\b(?:eok|jo)(?:[ -]?won)?\b|\bman[ -]?won\b", re.I)
+_CURRENCY_NUMBER = r"\d[\d,]*(?:\.\d+)?"
 KOREAN_CURRENCY_PATTERN = re.compile(
-    r"(?P<number>\d[\d,]*(?:\.\d+)?)\s*(?P<large_unit>조|억)원?"
-    r"|(?P<man_number>\d[\d,]*(?:\.\d+)?)\s*만원"
+    rf"(?P<jo>{_CURRENCY_NUMBER})\s*조"
+    rf"(?:\s*(?P<jo_eok>{_CURRENCY_NUMBER})\s*억)?"
+    rf"(?:\s*(?P<jo_man>{_CURRENCY_NUMBER})\s*만)?"
+    rf"(?:\s*(?P<jo_won>{_CURRENCY_NUMBER})\s*원|\s*원)?"
+    rf"|(?P<eok>{_CURRENCY_NUMBER})\s*억"
+    rf"(?:\s*(?P<eok_man>{_CURRENCY_NUMBER})\s*만)?"
+    rf"(?:\s*(?P<eok_won>{_CURRENCY_NUMBER})\s*원|\s*원)?"
+    rf"|(?P<man>{_CURRENCY_NUMBER})\s*만"
+    rf"(?:\s*(?P<man_won>{_CURRENCY_NUMBER})\s*원|\s*원)?"
+    rf"|(?P<won>{_CURRENCY_NUMBER})\s*원"
 )
 
 NEWS_SEGMENT_INSTRUCTIONS = """Translate one bounded Korean financial-news paragraph fragment
@@ -565,17 +574,7 @@ def _currency_conversions(source_text: str) -> list[dict[str, str]]:
     conversions: list[dict[str, str]] = []
     seen: set[str] = set()
     for match in KOREAN_CURRENCY_PATTERN.finditer(source_text):
-        number_text = match.group("number") or match.group("man_number")
-        unit = match.group("large_unit") or "만"
-        won = (
-            Decimal(number_text.replace(",", ""))
-            * {
-                "조": Decimal("1000000000000"),
-                "억": Decimal("100000000"),
-                "만": Decimal("10000"),
-            }[unit]
-        )
-        english_text = _format_krw(won)
+        english_text = _format_krw(_won_from_currency_match(match))
         if english_text in seen:
             continue
         seen.add(english_text)
@@ -587,21 +586,31 @@ def _protect_currency_amounts(source_text: str) -> tuple[str, tuple[tuple[str, s
     protected: list[tuple[str, str]] = []
 
     def replace(match: re.Match[str]) -> str:
-        number_text = match.group("number") or match.group("man_number")
-        unit = match.group("large_unit") or "만"
-        won = (
-            Decimal(number_text.replace(",", ""))
-            * {
-                "조": Decimal("1000000000000"),
-                "억": Decimal("100000000"),
-                "만": Decimal("10000"),
-            }[unit]
-        )
         token = f"__KRW_AMOUNT_{len(protected)}__"
-        protected.append((token, _format_krw(won)))
+        protected.append((token, _format_krw(_won_from_currency_match(match))))
         return token
 
     return KOREAN_CURRENCY_PATTERN.sub(replace, source_text), tuple(protected)
+
+
+def _won_from_currency_match(match: re.Match[str]) -> Decimal:
+    won = Decimal("0")
+    for group, multiplier in (
+        ("jo", Decimal("1000000000000")),
+        ("jo_eok", Decimal("100000000")),
+        ("jo_man", Decimal("10000")),
+        ("jo_won", Decimal("1")),
+        ("eok", Decimal("100000000")),
+        ("eok_man", Decimal("10000")),
+        ("eok_won", Decimal("1")),
+        ("man", Decimal("10000")),
+        ("man_won", Decimal("1")),
+        ("won", Decimal("1")),
+    ):
+        value = match.group(group)
+        if value is not None:
+            won += Decimal(value.replace(",", "")) * multiplier
+    return won
 
 
 def _restore_currency_amounts(source_text: str, translated_text: str) -> str:
@@ -663,7 +672,9 @@ def _format_krw(won: Decimal) -> str:
         (Decimal("1000000"), "million"),
     ):
         if won >= divisor:
-            value = format(won / divisor, "f").rstrip("0").rstrip(".")
+            value = format(won / divisor, "f")
+            if "." in value:
+                value = value.rstrip("0").rstrip(".")
             return f"KRW {value} {label}"
     return f"KRW {won:,.0f}"
 
