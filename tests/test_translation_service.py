@@ -189,6 +189,33 @@ def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
     assert responses.arguments["timeout"] == 60.0
 
 
+def test_news_narrative_repairs_field_label_placeholders_without_retry() -> None:
+    title = "노선 확대"
+    paragraphs = ("회사는 가을 수요에 대응해 노선을 확대했다.", "경쟁력을 강화할 계획이다.")
+    source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
+    responses = FakeResponses(
+        SimpleNamespace(
+            translated_paragraphs=(
+                "The company expanded routes to capture autumn demand.",
+                "It plans to strengthen its competitiveness.",
+            ),
+            what="What",
+            why="Why",
+            impact="Impact",
+        )
+    )
+
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v3"
+        )
+    )
+
+    assert result.what == "The company expanded routes to capture autumn demand."
+    assert result.why == "The company expanded routes to capture autumn demand."
+    assert result.impact == "It plans to strengthen its competitiveness."
+
+
 def test_news_narrative_rejects_hangul_in_english_output() -> None:
     title = "실적 발표"
     paragraphs = ("매출이 증가했다.",)
