@@ -51,7 +51,7 @@ class NewsNarrativeRequest(BaseModel):
     title: str = Field(min_length=1, max_length=1_000)
     paragraphs: tuple[BoundedParagraph, ...] = Field(min_length=1, max_length=500)
     content_availability: Literal["FULL_ARTICLE", "SOURCE_EXCERPT"]
-    target_locale: Literal["en"] = "en"
+    target_locale: Literal["en", "ko"] = "en"
     translation_version: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9._-]+$")
 
 
