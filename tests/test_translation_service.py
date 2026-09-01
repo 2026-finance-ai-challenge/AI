@@ -279,7 +279,7 @@ def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
     assert responses.calls == 2
 
 
-def test_news_narrative_rejects_hangul_in_english_output() -> None:
+def test_news_narrative_transliterates_hangul_in_english_output() -> None:
     title = "실적 발표"
     paragraphs = ("매출이 증가했다.",)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -292,14 +292,13 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
         )
     )
 
-    with pytest.raises(AppError) as captured:
-        asyncio.run(
-            _service(responses).translate_news_narrative(
-                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
-            )
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
         )
+    )
 
-    assert captured.value.code == "AI_INVALID_OUTPUT"
+    assert result.translated_paragraphs == ("maechul increased.",)
 
 
 def test_news_segment_schema_accepts_provider_text_for_service_validation() -> None:
