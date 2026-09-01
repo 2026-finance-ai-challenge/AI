@@ -4,9 +4,11 @@ import json
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from openai import APITimeoutError, OpenAIError, RateLimitError
 
 from k_market_ai.core.config import Settings
+from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
     TranslationService,
@@ -52,9 +54,10 @@ def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
     source = _title("T1", "공시 제목")
     responses = FakeResponses(SimpleNamespace(items=()))
 
-    result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+    with pytest.raises(AppError) as captured:
+        asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
 
-    assert result.items[0].translated_text == "gongsi jemog"
+    assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
 def test_english_title_batch_transliterates_hangul_in_provider_output() -> None:
@@ -114,7 +117,7 @@ def test_korean_currency_conversion_preserves_round_and_compound_units() -> None
     ]
 
 
-def test_english_title_batch_falls_back_for_romanized_currency_conversion() -> None:
+def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() -> None:
     source = _title("T1", "투자유치 344억")
     responses = FakeResponses(
         SimpleNamespace(
@@ -128,9 +131,10 @@ def test_english_title_batch_falls_back_for_romanized_currency_conversion() -> N
         )
     )
 
-    result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+    with pytest.raises(AppError) as captured:
+        asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
 
-    assert result.items[0].translated_text == "tujayuchi KRW 34.4 billion"
+    assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
 def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None:
@@ -142,7 +146,7 @@ def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None
                     id="T1",
                     source_hash=source.source_hash,
                     translated_text=(
-                        "'Samsung Electronics-NX' incentives lift spending; "
+                        "'__TERM_SAMJEONNIX__' incentives lift spending; "
                         "consumption __KRW_AMOUNT_0__rises"
                     ),
                 ),
@@ -155,29 +159,25 @@ def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None
     assert result.items[0].translated_text == (
         "'Samjeonnix' incentives lift spending; consumption KRW 1.1 trillion rises"
     )
+    payload = json.loads(str(responses.arguments["input"]))
+    assert payload["items"][0]["source_text"].startswith("'__TERM_SAMJEONNIX__'")
+    assert payload["items"][0]["protected_term_tokens"] == ["__TERM_SAMJEONNIX__"]
 
 
-def test_english_title_batch_falls_back_when_provider_output_cannot_be_parsed() -> None:
-    source = _title("T1", "삼전닉스 170조원 순매도")
-    responses = FakeResponses(None)
-
-    result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
-
-    assert result.items[0].translated_text == "Samjeonnix KRW 170 trillion sunmaedo"
-
-
-def test_english_title_batch_falls_back_on_provider_timeout() -> None:
+def test_title_batch_classifies_provider_timeout() -> None:
     source = _title("T1", "공시 제목")
     timeout = APITimeoutError(request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
 
-    result = asyncio.run(
-        _service(FailingResponses(timeout)).translate_titles((source,), "en", "title-v1")
-    )
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(FailingResponses(timeout)).translate_titles((source,), "en", "title-v1")
+        )
 
-    assert result.items[0].translated_text == "gongsi jemog"
+    assert captured.value.code == "AI_PROVIDER_TIMEOUT"
+    assert captured.value.status_code == 504
 
 
-def test_english_title_batch_falls_back_on_exhausted_quota() -> None:
+def test_title_batch_classifies_exhausted_quota() -> None:
     source = _title("T1", "공시 제목")
     response = httpx.Response(
         429,
@@ -189,11 +189,13 @@ def test_english_title_batch_falls_back_on_exhausted_quota() -> None:
         body={"code": "credit_balance_exhausted"},
     )
 
-    result = asyncio.run(
-        _service(FailingResponses(exhausted)).translate_titles((source,), "en", "title-v1")
-    )
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(FailingResponses(exhausted)).translate_titles((source,), "en", "title-v1")
+        )
 
-    assert result.items[0].translated_text == "gongsi jemog"
+    assert captured.value.code == "AI_PROVIDER_QUOTA_EXHAUSTED"
+    assert captured.value.status_code == 503
 
 
 def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
