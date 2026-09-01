@@ -629,18 +629,22 @@ def _restore_currency_amounts(source_text: str, translated_text: str) -> str:
     restored = translated_text
     missing: list[str] = []
     for token, english_text in protected:
-        if token not in restored:
+        index_match = re.search(r"[0-9]+", token)
+        if index_match is None:
+            raise ValueError("Protected currency token must contain an index")
+        token_pattern = rf"_*KRW_?AMOUNT_?{index_match.group(0)}_*"
+        if re.search(token_pattern, restored, flags=re.I) is None:
             missing.append(english_text)
             continue
         restored = re.sub(
-            rf"{re.escape(token)}\s*(?:won)?",
+            rf"{token_pattern}(?:\s+won)?",
             english_text,
             restored,
             count=1,
             flags=re.I,
         )
-        restored = restored.replace(token, "")
-    restored = re.sub(r"__KRW_AMOUNT_[0-9]+__", "", restored)
+        restored = re.sub(token_pattern, "", restored, flags=re.I)
+    restored = re.sub(r"_*KRW_?AMOUNT_?[0-9]+_*", "", restored, flags=re.I)
     if missing:
         restored = f"{restored.rstrip()} — {', '.join(missing)}"
     return restored

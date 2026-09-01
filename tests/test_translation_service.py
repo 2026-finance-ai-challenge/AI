@@ -13,6 +13,7 @@ from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
     TranslationService,
     _currency_conversions,
+    _restore_currency_amounts,
     _StructuredNewsSegment,
     canonical_disclosure_section,
     canonical_news_source,
@@ -115,6 +116,15 @@ def test_korean_currency_conversion_preserves_round_and_compound_units() -> None
         {"source_text": "4000억원", "english_text": "KRW 400 billion"},
         {"source_text": "25만4000원", "english_text": "KRW 254,000"},
     ]
+
+
+def test_currency_restoration_accepts_provider_token_punctuation_variants() -> None:
+    source = "누적 1조원, 당일 4867억원"
+    translated = "Cumulative KRW_AMOUNT_0 and daily __KRW_AMOUNT_1__sales"
+
+    assert _restore_currency_amounts(source, translated) == (
+        "Cumulative KRW 1 trillion and daily KRW 486.7 billionsales"
+    )
 
 
 def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() -> None:
