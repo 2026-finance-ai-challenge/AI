@@ -12,6 +12,7 @@ from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
     TranslationService,
+    _currency_conversions,
     _StructuredNewsSegment,
     canonical_disclosure_section,
     canonical_news_source,
@@ -105,6 +106,15 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
         "__KRW_AMOUNT_1__",
     ]
     assert result.items[0].translated_text.startswith("Target Price")
+
+
+def test_korean_currency_conversion_preserves_round_and_compound_units() -> None:
+    assert _currency_conversions("170조원, 169조6022억원, 4000억원, 25만4000원") == [
+        {"source_text": "170조원", "english_text": "KRW 170 trillion"},
+        {"source_text": "169조6022억원", "english_text": "KRW 169.6022 trillion"},
+        {"source_text": "4000억원", "english_text": "KRW 400 billion"},
+        {"source_text": "25만4000원", "english_text": "KRW 254,000"},
+    ]
 
 
 def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() -> None:
