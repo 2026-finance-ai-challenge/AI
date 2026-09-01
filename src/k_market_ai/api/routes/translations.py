@@ -11,7 +11,7 @@ from k_market_ai.translations.service import TranslationService
 
 router = APIRouter(tags=["translations"])
 
-BoundedParagraph = Annotated[str, Field(min_length=1, max_length=12_000)]
+BoundedParagraph = Annotated[str, Field(min_length=1, max_length=120_000)]
 
 
 class TitleSourceRequest(BaseModel):
@@ -49,7 +49,7 @@ class NewsNarrativeRequest(BaseModel):
 
     source_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     title: str = Field(min_length=1, max_length=1_000)
-    paragraphs: tuple[BoundedParagraph, ...] = Field(min_length=1, max_length=200)
+    paragraphs: tuple[BoundedParagraph, ...] = Field(min_length=1, max_length=500)
     content_availability: Literal["FULL_ARTICLE", "SOURCE_EXCERPT"]
     target_locale: Literal["en"] = "en"
     translation_version: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9._-]+$")
