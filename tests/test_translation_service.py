@@ -47,6 +47,7 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert responses.arguments["text"] == {"verbosity": "low"}
     assert responses.arguments["store"] is False
     assert responses.arguments["timeout"] == 90.0
+    assert responses.arguments["max_output_tokens"] == 128_000
 
 
 def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
@@ -327,8 +328,7 @@ def test_long_news_narrative_uses_one_request_per_bounded_segment() -> None:
     assert len(result.translated_paragraphs) == len(paragraphs)
     assert responses.calls == 6
     assert {arguments["max_output_tokens"] for arguments in responses.history} == {
-        2_048,
-        16_384,
+        128_000,
     }
 
 
@@ -399,6 +399,7 @@ def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None
 
     assert result.translated_table_data_json == translated_table
     assert responses.arguments["timeout"] == 90.0
+    assert responses.arguments["max_output_tokens"] == 128_000
 
 
 def test_disclosure_section_rejects_hangul_in_english_output() -> None:
