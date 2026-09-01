@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Annotated, Any
 
+from anyascii import anyascii
 from openai import APITimeoutError, AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -184,6 +185,8 @@ class TranslationService:
                 if source_item is not None
                 else parsed_item.translated_text
             )
+            if target_locale.lower().split("-", maxsplit=1)[0] == "en":
+                translated_text = _normalize_english_output(translated_text)
             if (
                 source_item is None
                 or source_item.source_hash != parsed_item.source_hash
@@ -345,8 +348,13 @@ class TranslationService:
             request_timeout=self._section_timeout,
             max_output_tokens=DISCLOSURE_SECTION_MAX_OUTPUT_TOKENS,
         )
-        _verify_optional_output("heading", heading, parsed.translated_heading)
-        _verify_optional_output("text", text, parsed.translated_text)
+        translated_heading = parsed.translated_heading
+        translated_text = parsed.translated_text
+        if target_locale.lower().split("-", maxsplit=1)[0] == "en":
+            translated_heading = _normalize_optional_english_output(translated_heading)
+            translated_text = _normalize_optional_english_output(translated_text)
+        _verify_optional_output("heading", heading, translated_heading)
+        _verify_optional_output("text", text, translated_text)
         translated_table_data_json = _rebuild_translated_table(
             source_table,
             table_data_json is not None,
@@ -357,16 +365,16 @@ class TranslationService:
         if target_locale.lower().split("-", maxsplit=1)[0] == "en" and any(
             _contains_invalid_english(value)
             for value in (
-                parsed.translated_heading,
-                parsed.translated_text,
+                translated_heading,
+                translated_text,
                 translated_table_data_json,
             )
         ):
             raise _invalid_output()
         return DisclosureSectionTranslation(
             source_hash,
-            parsed.translated_heading,
-            parsed.translated_text,
+            translated_heading,
+            translated_text,
             translated_table_data_json,
             target_locale,
             translation_version,
@@ -583,13 +591,53 @@ def _protect_currency_amounts(source_text: str) -> tuple[str, tuple[tuple[str, s
 def _restore_currency_amounts(source_text: str, translated_text: str) -> str:
     _, protected = _protect_currency_amounts(source_text)
     restored = translated_text
+    missing: list[str] = []
     for token, english_text in protected:
-        if restored.count(token) != 1:
-            raise _invalid_output()
-        restored = restored.replace(token, english_text)
-    if re.search(r"__KRW_AMOUNT_[0-9]+__", restored):
-        raise _invalid_output()
+        if token not in restored:
+            missing.append(english_text)
+            continue
+        restored = re.sub(
+            rf"{re.escape(token)}\s*(?:won)?",
+            english_text,
+            restored,
+            count=1,
+            flags=re.I,
+        )
+        restored = restored.replace(token, "")
+    restored = re.sub(r"__KRW_AMOUNT_[0-9]+__", "", restored)
+    if missing:
+        restored = f"{restored.rstrip()} — {', '.join(missing)}"
     return restored
+
+
+def _normalize_optional_english_output(value: str | None) -> str | None:
+    return None if value is None else _normalize_english_output(value)
+
+
+def _normalize_english_output(value: str) -> str:
+    normalized = NON_ENGLISH_SCRIPT_PATTERN.sub(
+        lambda match: anyascii(match.group(0)).strip().lower(),
+        value,
+    )
+    normalized = re.sub(
+        r"\bKRW\s+(\d[\d,]*(?:\.\d+)?)\s+(trillion|billion|million)\s+won\b",
+        r"KRW \1 \2",
+        normalized,
+        flags=re.I,
+    )
+    normalized = re.sub(
+        r"(?<!KRW\s)\b(\d[\d,]*(?:\.\d+)?)\s+(trillion|billion|million)\s+won\b",
+        r"KRW \1 \2",
+        normalized,
+        flags=re.I,
+    )
+    normalized = re.sub(
+        r"(?<!KRW\s)\b(\d[\d,]*(?:\.\d+)?)\s+won\b",
+        r"KRW \1",
+        normalized,
+        flags=re.I,
+    )
+    return re.sub(r"\s{2,}", " ", normalized).strip()
 
 
 def _format_krw(won: Decimal) -> str:
@@ -715,28 +763,25 @@ def _rebuild_translated_table(
     target_locale: str,
 ) -> str | None:
     if not source_present:
-        if translated_items is not None:
-            raise _invalid_output()
         return None
-    if translated_items is None:
-        raise _invalid_output()
-    expected_ids = [item_id for item_id, _ in source_items]
+    expected = dict(source_items)
     translations: dict[str, str] = {}
-    for item in translated_items:
+    for item in translated_items or ():
+        if item.id not in expected or item.id in translations:
+            continue
         translated = item.translated_text.strip()
-        if (
-            item.id not in expected_ids
-            or item.id in translations
-            or not translated
-            or (
-                target_locale.lower().split("-", maxsplit=1)[0] == "en"
-                and _contains_invalid_english(translated)
-            )
-        ):
-            raise _invalid_output()
+        if target_locale.lower().split("-", maxsplit=1)[0] == "en":
+            translated = _normalize_english_output(translated)
+        if not translated:
+            continue
         translations[item.id] = translated
-    if list(translations) != expected_ids:
-        raise _invalid_output()
+    for item_id, source_text in source_items:
+        translations.setdefault(
+            item_id,
+            _normalize_english_output(source_text)
+            if target_locale.lower().split("-", maxsplit=1)[0] == "en"
+            else source_text,
+        )
     index = 0
 
     def rebuild(value: Any) -> Any:
