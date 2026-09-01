@@ -190,6 +190,12 @@ class TranslationService:
         returned: dict[str, str] = {}
         for parsed_item in parsed.items:
             source_item = expected.get(parsed_item.id)
+            if (
+                source_item is None
+                or source_item.source_hash != parsed_item.source_hash
+                or parsed_item.id in returned
+            ):
+                continue
             translated_text = (
                 _restore_currency_amounts(source_item.source_text, parsed_item.translated_text)
                 if source_item is not None
@@ -197,25 +203,24 @@ class TranslationService:
             )
             if target_locale.lower().split("-", maxsplit=1)[0] == "en":
                 translated_text = _normalize_english_output(translated_text)
-            if (
-                source_item is None
-                or source_item.source_hash != parsed_item.source_hash
-                or parsed_item.id in returned
-                or (
-                    target_locale.lower().split("-", maxsplit=1)[0] == "en"
-                    and (
-                        NON_ENGLISH_SCRIPT_PATTERN.search(translated_text) is not None
-                        or ROMANIZED_CURRENCY_PATTERN.search(translated_text) is not None
-                        or not _contains_required_currency_conversions(
-                            source_item.source_text,
-                            translated_text,
-                        )
-                    )
+                translated_text = _normalize_special_title_terms(
+                    source_item.source_text,
+                    translated_text,
                 )
-            ):
-                raise _invalid_output()
+                if (
+                    NON_ENGLISH_SCRIPT_PATTERN.search(translated_text) is not None
+                    or ROMANIZED_CURRENCY_PATTERN.search(translated_text) is not None
+                    or not _contains_required_currency_conversions(
+                        source_item.source_text,
+                        translated_text,
+                    )
+                ):
+                    continue
             returned[parsed_item.id] = translated_text
-        if returned.keys() != expected.keys():
+        if target_locale.lower().split("-", maxsplit=1)[0] == "en":
+            for item in items:
+                returned.setdefault(item.id, _fallback_english_title(item.source_text))
+        elif returned.keys() != expected.keys():
             raise _invalid_output()
         ordered = tuple(
             TitleTranslation(item.id, item.source_hash, returned[item.id]) for item in items
@@ -662,7 +667,38 @@ def _normalize_english_output(value: str) -> str:
         normalized,
         flags=re.I,
     )
+    normalized = re.sub(
+        r"\b(trillion|billion|million)(?=[A-Za-z])",
+        r"\1 ",
+        normalized,
+        flags=re.I,
+    )
     return re.sub(r"\s{2,}", " ", normalized).strip()
+
+
+def _normalize_special_title_terms(source_text: str, translated_text: str) -> str:
+    if "삼전닉스" not in source_text:
+        return translated_text
+    normalized = re.sub(
+        r"\b(?:Samsung Electronics[- ]?NX|Samjeon[- ]?nix|Samjeonnix)\b",
+        "Samjeonnix",
+        translated_text,
+        flags=re.I,
+    )
+    return normalized if "Samjeonnix" in normalized else _fallback_english_title(source_text)
+
+
+def _fallback_english_title(source_text: str) -> str:
+    protected_source, protected = _protect_currency_amounts(source_text)
+    transliterated = NON_ENGLISH_SCRIPT_PATTERN.sub(
+        lambda match: anyascii(match.group(0)).strip().lower(),
+        protected_source,
+    )
+    restored = transliterated
+    for token, english_text in protected:
+        restored = restored.replace(token, english_text)
+    restored = restored.replace("samjeonnigseu", "Samjeonnix")
+    return _normalize_english_output(restored)
 
 
 def _format_krw(won: Decimal) -> str:

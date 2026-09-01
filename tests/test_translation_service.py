@@ -54,10 +54,9 @@ def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
     source = _title("T1", "공시 제목")
     responses = FakeResponses(SimpleNamespace(items=()))
 
-    with pytest.raises(AppError) as captured:
-        asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+    result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
 
-    assert captured.value.code == "AI_INVALID_OUTPUT"
+    assert result.items[0].translated_text == "gongsi jemog"
 
 
 def test_english_title_batch_transliterates_hangul_in_provider_output() -> None:
@@ -117,7 +116,7 @@ def test_korean_currency_conversion_preserves_round_and_compound_units() -> None
     ]
 
 
-def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() -> None:
+def test_english_title_batch_falls_back_for_romanized_currency_conversion() -> None:
     source = _title("T1", "투자유치 344억")
     responses = FakeResponses(
         SimpleNamespace(
@@ -131,10 +130,33 @@ def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() 
         )
     )
 
-    with pytest.raises(AppError) as captured:
-        asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+    result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
 
-    assert captured.value.code == "AI_INVALID_OUTPUT"
+    assert result.items[0].translated_text == "tujayuchi KRW 34.4 billion"
+
+
+def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None:
+    source = _title("T1", "'삼전닉스' 성과급에 지갑 열렸다…지역 소비 1조1000억 증가")
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="T1",
+                    source_hash=source.source_hash,
+                    translated_text=(
+                        "'Samsung Electronics-NX' incentives lift spending; "
+                        "consumption __KRW_AMOUNT_0__rises"
+                    ),
+                ),
+            )
+        )
+    )
+
+    result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
+
+    assert result.items[0].translated_text == (
+        "'Samjeonnix' incentives lift spending; consumption KRW 1.1 trillion rises"
+    )
 
 
 def test_title_batch_classifies_provider_timeout() -> None:
