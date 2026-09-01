@@ -31,6 +31,9 @@ english_text exactly; never emit Korean or romanized units such as eok, jo, or m
 facts. Return every supplied ID and source hash exactly once. Return only the requested schema."""
 
 HANGUL_PATTERN = re.compile(r"[\u3131-\u318e\uac00-\ud7a3]")
+NON_ENGLISH_SCRIPT_PATTERN = re.compile(
+    r"[\u3131-\u318e\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7a3]"
+)
 ROMANIZED_CURRENCY_PATTERN = re.compile(r"\b(?:eok|jo)(?:[ -]?won)?\b|\bman[ -]?won\b", re.I)
 KOREAN_CURRENCY_PATTERN = re.compile(
     r"(?P<number>\d[\d,]*(?:\.\d+)?)\s*(?P<large_unit>조|억)원?"
@@ -169,7 +172,7 @@ class TranslationService:
                 or (
                     target_locale.lower().split("-", maxsplit=1)[0] == "en"
                     and (
-                        HANGUL_PATTERN.search(parsed_item.translated_text) is not None
+                        NON_ENGLISH_SCRIPT_PATTERN.search(parsed_item.translated_text) is not None
                         or ROMANIZED_CURRENCY_PATTERN.search(parsed_item.translated_text)
                         is not None
                         or not _contains_required_currency_conversions(
@@ -386,7 +389,7 @@ class TranslationService:
 
 def _contains_invalid_english(value: str | None) -> bool:
     return value is not None and (
-        HANGUL_PATTERN.search(value) is not None
+        NON_ENGLISH_SCRIPT_PATTERN.search(value) is not None
         or ROMANIZED_CURRENCY_PATTERN.search(value) is not None
     )
 
@@ -441,15 +444,30 @@ def _repair_narrative_summaries(
     why: str,
     impact: str,
 ) -> tuple[str, str, str]:
-    repaired_what = _fallback_summary(paragraphs, "what") if _is_placeholder(what) else what
-    repaired_why = _fallback_summary(paragraphs, "why") if _is_placeholder(why) else why
-    repaired_impact = _fallback_summary(paragraphs, "impact") if _is_placeholder(impact) else impact
-    return repaired_what, repaired_why, repaired_impact
+    repaired_what = _fallback_summary(paragraphs, "what") if _needs_summary_repair(what) else what
+    repaired_why = _fallback_summary(paragraphs, "why") if _needs_summary_repair(why) else why
+    repaired_impact = (
+        _fallback_summary(paragraphs, "impact") if _needs_summary_repair(impact) else impact
+    )
+    return (
+        _concise_sentence(repaired_what),
+        _concise_sentence(repaired_why),
+        _concise_sentence(repaired_impact),
+    )
 
 
 def _is_placeholder(value: str) -> bool:
     normalized = re.sub(r"[^a-z/]", "", value.casefold())
     return normalized in {re.sub(r"[^a-z/]", "", item) for item in _SUMMARY_PLACEHOLDERS}
+
+
+def _needs_summary_repair(value: str) -> bool:
+    stripped = value.strip()
+    return (
+        _is_placeholder(stripped)
+        or _contains_invalid_english(stripped)
+        or re.search(r"[.!?…][\"'”’)]?$", stripped) is None
+    )
 
 
 def _fallback_summary(paragraphs: Sequence[str], kind: str) -> str:
