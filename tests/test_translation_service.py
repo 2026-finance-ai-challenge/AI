@@ -237,7 +237,7 @@ def test_news_narrative_preserves_paragraph_count_and_source_hash() -> None:
 
     assert result.content_availability == "SOURCE_EXCERPT"
     assert len(result.translated_paragraphs) == len(paragraphs)
-    assert responses.arguments["timeout"] == 60.0
+    assert responses.arguments["timeout"] == 180.0
 
 
 def test_news_narrative_repairs_field_label_placeholders_without_retry() -> None:

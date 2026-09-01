@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     news_narrative_prompt_version: str = "news-narrative-v8"
     disclosure_section_prompt_version: str = "disclosure-section-translation-v3"
     title_translation_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
-    news_narrative_timeout_seconds: float = Field(default=60.0, ge=10.0, le=180.0)
+    news_narrative_timeout_seconds: float = Field(default=180.0, ge=10.0, le=180.0)
     disclosure_section_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
     filing_summary_prompt_version: str = "filing-summary-v2"
     agent_model: str = "gpt-5-nano"
