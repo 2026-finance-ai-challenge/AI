@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 
@@ -102,3 +103,4 @@ class GeneratedAnswer:
     citation_ids: tuple[str, ...]
     refusal_reason: str | None
     model: str
+    answer_locale: Literal["en", "ko"] = "en"

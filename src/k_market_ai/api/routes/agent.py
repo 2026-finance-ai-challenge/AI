@@ -9,6 +9,7 @@ from k_market_ai.agent.service import (
     MarketAgentService,
 )
 from k_market_ai.api.internal_auth import authenticate_internal
+from k_market_ai.core.answer_language import AnswerLocale
 from k_market_ai.core.errors import AppError
 
 router = APIRouter(prefix="/internal/v1/agent", tags=["market-agent"])
@@ -40,6 +41,7 @@ class AgentAnswerRequest(BaseModel):
     history: tuple[HistoryMessageRequest, ...] = Field(max_length=20)
     evidence: tuple[AgentEvidenceRequest, ...] = Field(max_length=20)
     safety_identifier: str = Field(pattern=r"^[0-9a-f]{64}$")
+    answer_locale: AnswerLocale = "auto"
 
 
 class AgentAnswerResponse(BaseModel):
@@ -70,6 +72,7 @@ async def answer(
             for item in body.evidence
         ),
         body.safety_identifier,
+        body.answer_locale,
     )
     return AgentAnswerResponse(
         answer=result.answer,

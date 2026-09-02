@@ -29,7 +29,7 @@ def test_answer_disables_storage_and_sends_only_retrieved_context() -> None:
         selected_priority=2,
     )
 
-    answer = asyncio.run(adapter.answer("What changed?", [("C1", hit)]))
+    answer = asyncio.run(adapter.answer("What changed?", [("C1", hit)], "en"))
 
     assert answer.model == ANSWER_MODEL
     assert answer.citation_ids == ("C1",)
@@ -68,7 +68,7 @@ def test_unfinished_provider_response_is_not_parsed_or_retried(status) -> None:
 
     adapter = OpenAIAnswerAdapter(SimpleNamespace(responses=SimpleNamespace(create=create)))
     with pytest.raises(RagProviderError, match="did not complete"):
-        asyncio.run(adapter.answer("What changed?", []))
+        asyncio.run(adapter.answer("What changed?", [], "en"))
     assert len(calls) == 1
 
 

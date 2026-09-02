@@ -38,6 +38,7 @@ def test_market_agent_uses_server_evidence_without_provider_storage() -> None:
                 ),
             ),
             "a" * 64,
+            "en",
         )
     )
 

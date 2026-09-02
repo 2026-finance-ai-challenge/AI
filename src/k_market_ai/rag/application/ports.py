@@ -3,6 +3,7 @@ from datetime import timedelta
 from typing import Protocol
 from uuid import UUID
 
+from k_market_ai.core.answer_language import AnswerLocale
 from k_market_ai.rag.domain.models import (
     EmbeddedChunk,
     GeneratedAnswer,
@@ -28,6 +29,7 @@ class AnswerPort(Protocol):
         self,
         question: str,
         contexts: Sequence[tuple[str, SearchHit]],
+        answer_locale: AnswerLocale = "auto",
     ) -> GeneratedAnswer: ...
 
 

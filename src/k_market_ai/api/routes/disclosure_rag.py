@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from k_market_ai.api.internal_auth import authenticate_internal
+from k_market_ai.core.answer_language import AnswerLocale
 from k_market_ai.core.errors import AppError
 from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
 from k_market_ai.rag.domain.models import SelectedContext
@@ -25,6 +26,7 @@ class DisclosureQuestionRequest(BaseModel):
 
     question: str = Field(min_length=1, max_length=2_000)
     selected_context: SelectedContextRequest | None = None
+    answer_locale: AnswerLocale = "auto"
 
 
 class CitationResponse(BaseModel):
@@ -68,7 +70,7 @@ async def ask_disclosure(
             translation_source_hash=body.selected_context.translation_source_hash,
         )
     )
-    answer = await handler.ask(receipt_number, body.question, selected)
+    answer = await handler.ask(receipt_number, body.question, selected, body.answer_locale)
     return DisclosureAnswerResponse(
         answer=answer.answer,
         refused=answer.refused,
