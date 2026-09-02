@@ -88,6 +88,7 @@ class RagRepository(Protocol):
         receipt_number: str,
         section_id: UUID,
         normalized_text: str,
+        translation_source_hash: str | None = None,
     ) -> bool: ...
 
     async def search(

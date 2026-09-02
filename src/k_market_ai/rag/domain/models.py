@@ -55,6 +55,7 @@ class MetadataEmbeddingJob:
 class SelectedContext:
     section_id: UUID
     text: str
+    translation_source_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

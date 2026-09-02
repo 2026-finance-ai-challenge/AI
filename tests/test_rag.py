@@ -137,6 +137,7 @@ class FakeRepository:
         receipt_number: str,
         section_id: UUID,
         normalized_text: str,
+        translation_source_hash: str | None = None,
     ) -> bool:
         return self._selected_text_valid
 

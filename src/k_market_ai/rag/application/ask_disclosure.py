@@ -99,6 +99,7 @@ class AskDisclosureHandler:
             receipt_number,
             selected.section_id,
             normalized,
+            selected.translation_source_hash,
         ):
             raise AppError(
                 code="INVALID_SELECTED_CONTEXT",

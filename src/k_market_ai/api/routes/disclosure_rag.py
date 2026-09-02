@@ -17,6 +17,7 @@ class SelectedContextRequest(BaseModel):
 
     section_id: UUID
     text: str = Field(min_length=1, max_length=2_000)
+    translation_source_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class DisclosureQuestionRequest(BaseModel):
@@ -64,6 +65,7 @@ async def ask_disclosure(
         else SelectedContext(
             section_id=body.selected_context.section_id,
             text=body.selected_context.text,
+            translation_source_hash=body.selected_context.translation_source_hash,
         )
     )
     answer = await handler.ask(receipt_number, body.question, selected)
