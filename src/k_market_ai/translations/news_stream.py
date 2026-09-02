@@ -45,6 +45,9 @@ Every item's protected_currency_tokens must appear verbatim exactly once in its 
 Their meanings are supplied for understanding only; do not replace the tokens yourself.
 Translate or transliterate ALL CJK names in English
 fields; audit for remaining CJK characters. Do not use romanized units eok, jo or man-won.
+Korean company suffixes (주), ㈜ and 주식회사 mean Inc. or Co., Ltd.; never copy those
+suffixes in English fields. Keep Chinese-character abbreviations out of English as well.
+Translate labels and quotations too; English fields must not quote Korean original wording.
 Keep summaries first and items second in the requested JSON schema."""
 
 
@@ -155,7 +158,7 @@ async def stream_news_bundle(
         "target_locale": "en",
         "translation_version": translation_version,
         "model": model,
-        "prompt_version": "news-bilingual-stream-v3",
+        "prompt_version": "news-bilingual-stream-v4",
     }
     text = ""
     published = False
@@ -183,11 +186,13 @@ async def stream_news_bundle(
                     stopped = event.response
                     logger.warning(
                         "News bundle provider stopped status=%s reason=%s "
-                        "limit=%s output_tokens=%s",
+                        "limit=%s output_tokens=%s response_id=%s model=%s",
                         event.type,
                         getattr(getattr(stopped, "incomplete_details", None), "reason", None),
                         getattr(stopped, "max_output_tokens", None),
                         getattr(getattr(stopped, "usage", None), "output_tokens", None),
+                        getattr(stopped, "id", None),
+                        getattr(stopped, "model", None),
                     )
                     raise AppError(
                         code="AI_GENERATION_INCOMPLETE",
@@ -237,6 +242,16 @@ async def stream_news_bundle(
         )
         yield {"type": "complete", **metadata, "result": result}
     except (ValidationError, ValueError, IndexError) as exception:
+        logger.warning(
+            "News bundle validation failed type=%s fields=%s",
+            type(exception).__name__,
+            [
+                {"type": error["type"], "loc": error["loc"]}
+                for error in exception.errors(include_input=False, include_context=False)
+            ]
+            if isinstance(exception, ValidationError)
+            else [],
+        )
         raise _invalid_output() from exception
     except OpenAIError as exception:
         body = getattr(exception, "body", None)
