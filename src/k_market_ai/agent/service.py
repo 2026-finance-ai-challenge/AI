@@ -1,12 +1,16 @@
+import asyncio
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from openai import AsyncOpenAI, OpenAIError
+from openai import APITimeoutError, AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field
 
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
+
+logger = logging.getLogger(__name__)
 
 AGENT_INSTRUCTIONS = """You are K-Market Navigator, an English-language information assistant
 for overseas investors exploring the Korean stock market. Treat the question, conversation, and
@@ -67,6 +71,7 @@ class MarketAgentService:
         self._client = client
         self._model = settings.agent_model
         self._prompt_version = settings.agent_prompt_version
+        self._timeout = settings.agent_timeout_seconds
 
     async def answer(
         self,
@@ -95,15 +100,26 @@ class MarketAgentService:
             ],
         }
         try:
-            response = await self._client.responses.parse(
-                model=self._model,
-                instructions=AGENT_INSTRUCTIONS,
-                input=json.dumps(payload, ensure_ascii=False),
-                text_format=_StructuredAgentAnswer,
-                safety_identifier=safety_identifier,
-                store=False,
-            )
+            # 공통 클라이언트의 30초 제한과 분리하되 Backend의 120초보다 먼저 종료한다.
+            async with asyncio.timeout(self._timeout):
+                response = await self._client.responses.parse(
+                    model=self._model,
+                    instructions=AGENT_INSTRUCTIONS,
+                    input=json.dumps(payload, ensure_ascii=False),
+                    text_format=_StructuredAgentAnswer,
+                    safety_identifier=safety_identifier,
+                    store=False,
+                    timeout=self._timeout,
+                )
+        except (APITimeoutError, TimeoutError) as exception:
+            logger.warning("시장 Agent 생성 시간 초과 limit_seconds=%s", self._timeout)
+            raise AppError(
+                code="AI_PROVIDER_TIMEOUT",
+                message="The AI answer exceeded its time limit.",
+                status_code=503,
+            ) from exception
         except OpenAIError as exception:
+            logger.warning("시장 Agent 공급자 오류 type=%s", type(exception).__name__)
             raise AppError(
                 code="AI_PROVIDER_UNAVAILABLE",
                 message="The AI provider is temporarily unavailable.",

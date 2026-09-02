@@ -1,8 +1,14 @@
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import httpx
+import pytest
+from openai import APITimeoutError
 
 from k_market_ai.agent.service import AgentEvidence, AgentHistoryMessage, MarketAgentService
 from k_market_ai.core.config import Settings
+from k_market_ai.core.errors import AppError
 
 
 def test_market_agent_uses_server_evidence_without_provider_storage() -> None:
@@ -40,7 +46,32 @@ def test_market_agent_uses_server_evidence_without_provider_storage() -> None:
     assert result.prompt_version == "market-agent-test-v2"
     assert responses.arguments["store"] is False
     assert responses.arguments["safety_identifier"] == "a" * 64
+    assert responses.arguments["timeout"] == 90.0
     assert "KRW 78,000" in str(responses.arguments["input"])
+
+
+@pytest.mark.parametrize("deadline", [False, True])
+def test_market_agent_timeout_is_distinct_and_never_retries(deadline: bool) -> None:
+    failure = (
+        TimeoutError()
+        if deadline
+        else APITimeoutError(request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+    )
+    parse = AsyncMock(side_effect=failure)
+    service = MarketAgentService(
+        SimpleNamespace(responses=SimpleNamespace(parse=parse)), Settings()
+    )
+    with pytest.raises(AppError) as caught:
+        asyncio.run(service.answer("NEWS", "News", "Explain this.", (), (), "a" * 64))
+    assert caught.value.code == "AI_PROVIDER_TIMEOUT"
+    parse.assert_awaited_once()
+
+
+def test_market_agent_timeout_cannot_outlive_backend_request() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(agent_timeout_seconds=120)
 
 
 class FakeResponses:
