@@ -1,0 +1,20 @@
+name: Permanent branch recovery
+
+on:
+  delete:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-dev:
+    if: github.event.ref_type == 'branch' && github.event.ref == 'dev'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: 기본 브랜치 체크아웃
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: 개발 브랜치 복원
+        run: git push origin HEAD:refs/heads/dev
