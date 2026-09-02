@@ -45,8 +45,9 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
 
     assert [item.id for item in result.items] == ["T1", "T2"]
     assert result.items[0].translated_text == "Samsung Electronics Unveils New Product"
-    assert responses.arguments["reasoning"] == {"effort": "minimal"}
-    assert responses.arguments["text"] == {"verbosity": "low"}
+    assert responses.arguments["reasoning"] == {"effort": "low"}
+    assert responses.arguments["text"]["verbosity"] == "low"
+    assert responses.arguments["text"]["format"]["type"] == "json_schema"
     assert responses.arguments["store"] is False
     assert responses.arguments["timeout"] == 90.0
     assert responses.arguments["max_output_tokens"] == 16_384
@@ -341,7 +342,7 @@ def test_news_narrative_rejects_non_english_summary_without_fallback() -> None:
     assert responses.calls == 2
 
 
-def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
+def test_news_narrative_rejects_oversized_summary_without_truncating_or_retrying() -> None:
     title = "요약 제한"
     paragraphs = ("회사는 신사업 계획을 발표했다.",)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -359,16 +360,13 @@ def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_news_narrative(
-            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+            )
         )
-    )
-
-    assert len(result.what.split()) <= 24
-    assert result.what.endswith((".", "…"))
-    assert len(result.what) <= 180
-    assert "second sentence" not in result.what.lower()
+    assert captured.value.code == "AI_INVALID_OUTPUT"
     assert responses.calls == 2
 
 
@@ -395,12 +393,27 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_news_segment_item_schema_accepts_provider_text_for_service_validation() -> None:
-    parsed = _StructuredNewsSegmentItem.model_validate(
-        {"id": "segment-0", "translated_text": "The company strengthened 전문 역량."}
-    )
+def test_news_segment_schema_rejects_cjk_before_service_validation() -> None:
+    from pydantic import ValidationError
 
-    assert parsed.translated_text.endswith("역량.")
+    with pytest.raises(ValidationError):
+        _StructuredNewsSegmentItem.model_validate(
+            {"id": "segment-0", "translated_text": "The company strengthened 전문 역량."}
+        )
+
+
+def test_disclosure_schema_forbids_untranslated_short_labels() -> None:
+    from pydantic import ValidationError
+
+    from k_market_ai.translations.service import _StructuredDisclosureText
+
+    for value in ("IR부", "<소속회사용>", "(주)우리금융지주", "변동"):
+        with pytest.raises(ValidationError):
+            _StructuredDisclosureText.model_validate({"translated_text": value})
+    assert (
+        _StructuredDisclosureText(translated_text="IR Department").translated_text
+        == "IR Department"
+    )
 
 
 def test_long_news_narrative_batches_bounded_segments() -> None:
@@ -543,7 +556,47 @@ def test_disclosure_table_translation_is_bounded_and_preserves_ascii_cells() -> 
     assert responses.batch_sizes == [18, 2]
 
 
-class FakeResponses:
+def test_person_name_jo_is_not_a_romanized_currency_unit():
+    from k_market_ai.translations.service import _contains_invalid_english
+
+    assert not _contains_invalid_english("Jo joins the shortlist; Samjeonnix shares rise")
+    assert _contains_invalid_english("Funding reaches 3 jo")
+    assert _contains_invalid_english("Raises 344 eok won")
+
+
+def test_incomplete_provider_output_is_not_parsed_or_retried():
+    class IncompleteResponses:
+        calls = 0
+
+        async def create(self, **arguments):
+            self.calls += 1
+            return SimpleNamespace(
+                status="incomplete",
+                output_text='{"items": [',
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                usage=SimpleNamespace(output_tokens=1001),
+            )
+
+    responses = IncompleteResponses()
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            _service(responses).translate_titles(
+                (_title("one", "삼성전자 실적 발표"),), "en", "title-v1"
+            )
+        )
+    assert error.value.code == "AI_GENERATION_INCOMPLETE"
+    assert responses.calls == 1
+
+
+class CreatedResponseAdapter:
+    async def create(self, **arguments: object) -> SimpleNamespace:
+        response = await self.parse(**arguments)
+        return SimpleNamespace(
+            status="completed", output_text=json.dumps(response.output_parsed, default=vars)
+        )
+
+
+class FakeResponses(CreatedResponseAdapter):
     def __init__(self, parsed: object) -> None:
         self.parsed = parsed
         self.arguments: dict[str, object] = {}
@@ -578,7 +631,7 @@ class FakeResponses:
         return SimpleNamespace(output_parsed=self.parsed)
 
 
-class FailingResponses:
+class FailingResponses(CreatedResponseAdapter):
     def __init__(self, exception: OpenAIError) -> None:
         self.exception = exception
 
@@ -587,7 +640,7 @@ class FailingResponses:
         raise self.exception
 
 
-class SingleNewsResponse:
+class SingleNewsResponse(CreatedResponseAdapter):
     def __init__(self) -> None:
         self.calls = 0
         self.arguments: dict[str, object] = {}
@@ -619,7 +672,7 @@ class SingleNewsResponse:
         return SimpleNamespace(output_parsed=parsed)
 
 
-class DisclosureResponses:
+class DisclosureResponses(CreatedResponseAdapter):
     def __init__(
         self,
         text_outputs: dict[str, str],
@@ -643,7 +696,7 @@ class DisclosureResponses:
         )
 
 
-class EchoDisclosureResponses:
+class EchoDisclosureResponses(CreatedResponseAdapter):
     def __init__(self) -> None:
         self.arguments: dict[str, object] = {}
         self.batch_sizes: list[int] = []

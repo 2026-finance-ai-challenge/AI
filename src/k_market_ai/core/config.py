@@ -24,13 +24,14 @@ class Settings(BaseSettings):
     news_prompt_version: str = "news-intelligence-v2"
     term_prompt_version: str = "financial-term-v1"
     translation_model: str = "gpt-5-nano"
-    title_translation_prompt_version: str = "financial-title-translation-v5"
+    title_translation_prompt_version: str = "financial-title-translation-v7"
     news_narrative_prompt_version: str = "news-narrative-v12"
-    disclosure_section_prompt_version: str = "disclosure-section-translation-v5"
+    translation_max_concurrency: int = Field(default=8, ge=1, le=16)
+    disclosure_section_prompt_version: str = "disclosure-section-translation-v7"
     title_translation_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
     news_narrative_timeout_seconds: float = Field(default=180.0, ge=10.0, le=180.0)
     disclosure_section_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
-    filing_summary_prompt_version: str = "filing-summary-v2"
+    filing_summary_prompt_version: str = "filing-summary-v3"
     agent_model: str = "gpt-5-nano"
     agent_prompt_version: str = "market-agent-v1"
     tax_document_prompt_version: str = "kmarket-tax-ocr-e2e-v1"
