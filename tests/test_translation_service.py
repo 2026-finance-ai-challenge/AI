@@ -27,13 +27,11 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     parsed = SimpleNamespace(
         items=(
             SimpleNamespace(
-                id="T2",
-                source_hash=second.source_hash,
+                id="title-1",
                 translated_text="Decision on Capital Increase with Consideration",
             ),
             SimpleNamespace(
-                id="T1",
-                source_hash=first.source_hash,
+                id="title-0",
                 translated_text="Samsung Electronics Unveils New Product",
             ),
         )
@@ -45,7 +43,9 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
 
     assert [item.id for item in result.items] == ["T1", "T2"]
     assert result.items[0].translated_text == "Samsung Electronics Unveils New Product"
-    assert responses.arguments["reasoning"] == {"effort": "low"}
+    assert [item.source_hash for item in result.items] == [first.source_hash, second.source_hash]
+    assert responses.arguments["reasoning"] == {"effort": "minimal"}
+    assert "source_hash" not in json.loads(responses.arguments["input"])["items"][0]
     assert responses.arguments["text"]["verbosity"] == "low"
     assert responses.arguments["text"]["format"]["type"] == "json_schema"
     assert responses.arguments["store"] is False
@@ -69,8 +69,7 @@ def test_english_title_batch_rejects_hangul_in_provider_output() -> None:
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
+                    id="title-0",
                     translated_text="마더스제약 Files for KOSDAQ Listing Review",
                 ),
             )
@@ -89,8 +88,7 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
+                    id="title-0",
                     translated_text=(
                         "Target Price at __KRW_AMOUNT_0__ After Raising __KRW_AMOUNT_1__"
                     ),
@@ -146,14 +144,20 @@ def test_currency_restoration_accepts_provider_token_punctuation_variants() -> N
     )
 
 
+def test_currency_range_qualifier_is_not_presented_as_an_item_counter() -> None:
+    from k_market_ai.translations.service import _protect_currency_amounts
+
+    protected, _ = _protect_currency_amounts("MLCC 1조원대 수주, 자동차 5대, 1억원대출")
+    assert protected == "MLCC 약 __KRW_AMOUNT_0__ 수주, 자동차 5대, __KRW_AMOUNT_1__대출"
+
+
 def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() -> None:
     source = _title("T1", "투자유치 344억")
     responses = FakeResponses(
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
+                    id="title-0",
                     translated_text="Raises 344 eok won in funding",
                 ),
             )
@@ -172,8 +176,7 @@ def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
+                    id="title-0",
                     translated_text=(
                         "'__TERM_SAMJEONNIX__' incentives lift spending; "
                         "consumption __KRW_AMOUNT_0__rises"
