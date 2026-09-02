@@ -26,6 +26,8 @@
 6. 작업 브랜치 삭제
 7. 배포 시 `dev`에서 `main` 대상 PR 생성
 
+`main`과 `dev`는 영구 브랜치다. 작업 브랜치 PR에만 `--delete-branch`를 사용한다. `dev -> main` 배포 PR은 브랜치를 삭제하지 않고 병합하며, 병합 직후 원격 `dev` 존재 여부를 확인한다. 실수로 `dev`가 삭제되면 기본 브랜치의 `Permanent branch recovery` 워크플로가 현재 `main`에서 즉시 복원한다.
+
 ## 커밋과 PR 제목
 
 형식:
