@@ -44,7 +44,7 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert [item.id for item in result.items] == ["T1", "T2"]
     assert result.items[0].translated_text == "Samsung Electronics Unveils New Product"
     assert [item.source_hash for item in result.items] == [first.source_hash, second.source_hash]
-    assert responses.arguments["reasoning"] == {"effort": "minimal"}
+    assert responses.arguments["reasoning"] == {"effort": "low"}
     assert "source_hash" not in json.loads(responses.arguments["input"])["items"][0]
     assert responses.arguments["text"]["verbosity"] == "low"
     assert responses.arguments["text"]["format"]["type"] == "json_schema"
@@ -63,14 +63,15 @@ def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_english_title_batch_rejects_hangul_in_provider_output() -> None:
+@pytest.mark.parametrize("untranslated_name", ["마더스제약", "iM證", "NH證"])
+def test_english_title_batch_rejects_hangul_in_provider_output(untranslated_name: str) -> None:
     source = _title("T1", "마더스제약 상장예비심사 신청")
     responses = FakeResponses(
         SimpleNamespace(
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text="마더스제약 Files for KOSDAQ Listing Review",
+                    translated_text=f"{untranslated_name} Files for KOSDAQ Listing Review",
                 ),
             )
         )

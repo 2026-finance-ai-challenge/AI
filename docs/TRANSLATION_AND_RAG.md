@@ -33,7 +33,7 @@ news-bilingual-v1 요청은 원문 한국어를 기준으로 summaries.en, summa
 - 회사명·부서명·짧은 라벨과 꺾쇠 안의 가시 텍스트도 영어로 번역한다. 영문 필드 스키마는 한글·CJK 잔존을 거절한다.
 - 한국식 금액·수량은 정확한 값으로 정규화·보호한다. 누락된 금액을 결과 끝에 덧붙여 성공 처리하지 않는다.
 - 공식 기관명 구분은 [금융위원회 소개](https://www.fsc.go.kr/eng/ab010101)를 기준으로 프롬프트에 명시한다.
-- 제목 프롬프트는 financial-title-translation-v8, 섹션은 disclosure-section-translation-v7다. 제목은 minimal 추론으로 짧은 내부 ID와 실제 번역만 생성한다. 원문 해시는 호출 전 서버에서 검증하고 응답에 직접 연결해 모델의 해시 복사 오류와 불필요한 토큰 생성을 방지한다.
+- 제목 프롬프트는 financial-title-translation-v8, 섹션은 disclosure-section-translation-v7다. 제목은 low 추론으로 짧은 내부 ID와 실제 번역만 생성한다. minimal은 실제 기사에서 기업명을 다른 회사로 바꾸는 오류가 있어 채택하지 않았다. 원문 해시는 호출 전 서버에서 검증하고 응답에 직접 연결해 모델의 해시 복사 오류와 불필요한 토큰 생성을 방지한다. 증권사 약칭의 證·증은 Securities로 해석하도록 지시하며, CJK 잔존 검증을 유지한다.
 - filing-summary-v3는 한 번의 원문 요청으로 두 언어의 요약을 생성한다. Backend는 같은 행의 EN/KR 필드를 저장하고 언어 전환 시 재생성하지 않는다.
 
 ## 제한·보안
