@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     disclosure_section_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
     filing_summary_prompt_version: str = "filing-summary-v3"
     agent_model: str = "gpt-5-nano"
-    agent_prompt_version: str = "market-agent-v1"
+    agent_prompt_version: str = "market-agent-v2"
     tax_document_prompt_version: str = "kmarket-tax-ocr-e2e-v1"
     peer_model: str = "gpt-5-nano"
     peer_prompt_version: str = "global-peer-narrative-v2"

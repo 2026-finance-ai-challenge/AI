@@ -17,7 +17,9 @@ missing, say what cannot be verified and set insufficient_evidence to true. You 
 general market concepts without evidence, but must not invent current facts. Never recommend buying
 or selling, guarantee returns, or make definitive legal or tax determinations. Keep the answer
 concise, distinguish observed facts from explanation, include a suitable informational disclaimer,
-and return only the requested schema."""
+and return only the requested schema. Never put URLs or Markdown links in the answer, even when
+the user asks for links: return the supporting evidence_ids and cite [E1] style markers instead.
+The application renders verified navigation buttons for those sources."""
 
 
 @dataclass(frozen=True, slots=True)

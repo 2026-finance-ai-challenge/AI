@@ -1,7 +1,11 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
+from k_market_ai.rag.domain.errors import RagProviderError
 from k_market_ai.rag.domain.models import SearchHit
 from k_market_ai.rag.infrastructure.openai_answer import (
     ANSWER_MODEL,
@@ -38,12 +42,60 @@ class FakeResponses:
     def __init__(self) -> None:
         self.arguments: dict[str, object] = {}
 
-    async def parse(self, **arguments: object) -> SimpleNamespace:
+    async def create(self, **arguments: object) -> SimpleNamespace:
         self.arguments = arguments
         parsed = SimpleNamespace(
-            answer="Revenue increased by 10%. [C1]",
+            claims=[{"text": "Revenue increased by 10%.", "citation_ids": ["C1"]}],
             sufficient_evidence=True,
-            citation_ids=("C1",),
             refusal_reason=None,
         )
-        return SimpleNamespace(output_parsed=parsed)
+        return SimpleNamespace(status="completed", output_text=json.dumps(vars(parsed)))
+
+
+@pytest.mark.parametrize("status", ["incomplete", "failed"])
+def test_unfinished_provider_response_is_not_parsed_or_retried(status) -> None:
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            status=status,
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            max_output_tokens=8192,
+            usage=SimpleNamespace(output_tokens=512),
+            output_text='{"answer":',
+        )
+
+    adapter = OpenAIAnswerAdapter(SimpleNamespace(responses=SimpleNamespace(create=create)))
+    with pytest.raises(RagProviderError, match="did not complete"):
+        asyncio.run(adapter.answer("What changed?", []))
+    assert len(calls) == 1
+
+
+def test_invalid_result_is_rejected_without_logging_source_or_output(caplog) -> None:
+    async def create(**kwargs):
+        return SimpleNamespace(status="completed", output_text='{"answer":"PRIVATE_OUTPUT"}')
+
+    adapter = OpenAIAnswerAdapter(SimpleNamespace(responses=SimpleNamespace(create=create)))
+    with pytest.raises(RagProviderError, match="invalid structured"):
+        asyncio.run(adapter.answer("PRIVATE_QUESTION", []))
+    assert "PRIVATE_OUTPUT" not in caplog.text
+    assert "PRIVATE_QUESTION" not in caplog.text
+
+
+def test_claim_without_source_is_rejected():
+    async def create(**kwargs):
+        return SimpleNamespace(
+            status="completed",
+            output_text=json.dumps(
+                {
+                    "claims": [{"text": "Revenue increased.", "citation_ids": []}],
+                    "sufficient_evidence": True,
+                    "refusal_reason": None,
+                }
+            ),
+        )
+
+    adapter = OpenAIAnswerAdapter(SimpleNamespace(responses=SimpleNamespace(create=create)))
+    with pytest.raises(RagProviderError):
+        asyncio.run(adapter.answer("What changed?", []))
