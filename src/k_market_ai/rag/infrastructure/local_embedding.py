@@ -30,6 +30,9 @@ class LocalEmbeddingAdapter:
     def dimensions(self) -> int:
         return EMBEDDING_DIMENSIONS
 
+    async def warmup(self) -> None:
+        await asyncio.to_thread(self._load_encoder)
+
     async def embed(self, texts: Sequence[str]) -> list[tuple[float, ...]]:
         if not texts:
             return []

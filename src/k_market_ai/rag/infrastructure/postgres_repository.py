@@ -156,6 +156,15 @@ class PostgresRagRepository(RagRepository):
                 raise LookupError("Disclosure does not exist")
             disclosure_id = UUID(str(disclosure_row[0]))
 
+            current_cursor = await connection.execute(
+                "SELECT id FROM disclosure_document WHERE disclosure_id = %s AND is_current",
+                (disclosure_id,),
+            )
+            current_ids = {UUID(str(row[0])) for row in await current_cursor.fetchall()}
+            if {item.chunk.document_id for item in chunks} != current_ids:
+                # 색인 도중 원문 버전이 바뀌면 새 버전의 대기 작업을 완료 처리하지 않는다.
+                return
+
             await connection.execute(
                 "UPDATE disclosure_chunk SET is_current = FALSE WHERE disclosure_id = %s",
                 (disclosure_id,),

@@ -11,7 +11,7 @@ from k_market_ai.rag.domain.models import (
     SelectedContext,
 )
 
-PROMPT_VERSION = "filing-grounded-v1"
+PROMPT_VERSION = "filing-grounded-v2"
 MIN_RELEVANCE = 0.28
 SEARCH_LIMIT = 6
 REFUSAL_MESSAGE = "I could not find sufficient evidence in this filing to answer that question."
