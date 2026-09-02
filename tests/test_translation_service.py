@@ -560,6 +560,30 @@ def test_disclosure_table_translation_is_bounded_and_preserves_ascii_cells() -> 
     assert responses.batch_sizes == [18, 2]
 
 
+@pytest.mark.parametrize(("items", "reason"), [
+    ((("value-9", "Example"),), "disclosure_table_unknown_id"),
+    ((("value-0", "Example"), ("value-0", "Example")), "disclosure_table_duplicate_id"),
+    ((("value-0", "Example"),), "disclosure_table_missing_id"),
+    ((("value-0", ""), ("value-1", "Example")), "disclosure_table_blank_translation"),
+    ((("value-0", "3 jo"), ("value-1", "Example")), "disclosure_table_invalid_english"),
+])
+def test_table_rejection_logs_only_contract_reason(items, reason, caplog):
+    table = json.dumps([["비공개원문갑", "비공개원문을"]], ensure_ascii=False)
+    responses = DisclosureResponses({}, tuple(
+        SimpleNamespace(id=identifier, translated_text=text) for identifier, text in items
+    ))
+    with pytest.raises(AppError) as error:
+        asyncio.run(_service(responses).translate_disclosure_section(
+            _hash(canonical_disclosure_section(None, None, table)),
+            None, None, table, "en", "section-v1",
+        ))
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert reason in caplog.text
+    assert "비공개원문" not in caplog.text
+    assert "Example" not in caplog.text
+    assert "3 jo" not in caplog.text
+
+
 def test_person_name_jo_is_not_a_romanized_currency_unit():
     from k_market_ai.translations.service import _contains_invalid_english
 

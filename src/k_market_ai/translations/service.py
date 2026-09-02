@@ -654,19 +654,23 @@ class TranslationService:
             returned: dict[str, _StructuredDisclosureTableItem] = {}
             for item in parsed.items:
                 source_text = expected.get(item.id)
-                if source_text is None or item.id in returned:
-                    raise _invalid_output()
+                if source_text is None:
+                    raise _invalid_output("disclosure_table_unknown_id")
+                if item.id in returned:
+                    raise _invalid_output("disclosure_table_duplicate_id")
                 translated = _restore_currency_amounts(source_text, item.translated_text.strip())
                 if target_locale.lower().split("-", maxsplit=1)[0] == "en":
                     translated = _normalize_english_output(translated)
-                if not translated or _contains_invalid_english(translated):
-                    raise _invalid_output()
+                if not translated:
+                    raise _invalid_output("disclosure_table_blank_translation")
+                if _contains_invalid_english(translated):
+                    raise _invalid_output("disclosure_table_invalid_english")
                 returned[item.id] = _StructuredDisclosureTableItem(
                     id=item.id,
                     translated_text=translated,
                 )
             if returned.keys() != expected.keys():
-                raise _invalid_output()
+                raise _invalid_output("disclosure_table_missing_id")
             return tuple(returned[item_id] for item_id, _ in batch)
 
         generated_batches = await asyncio.gather(*(translate_batch(batch) for batch in batches))
@@ -980,7 +984,7 @@ def _restore_currency_amounts(source_text: str, translated_text: str) -> str:
         token_pattern = rf"_*KRW_?AMOUNT_?{index_match.group(0)}(?![0-9])_*"
         if re.search(token_pattern, restored, flags=re.I) is None:
             if english_text.casefold() not in _normalize_english_output(restored).casefold():
-                raise _invalid_output()
+                raise _invalid_output("missing_currency_token")
             continue
         restored = re.sub(
             rf"{token_pattern}(?:\s+won)?",
@@ -991,7 +995,7 @@ def _restore_currency_amounts(source_text: str, translated_text: str) -> str:
         )
         restored = re.sub(token_pattern, "", restored, flags=re.I)
     if re.search(r"_*KRW_?AMOUNT_?[0-9]+_*", restored, flags=re.I):
-        raise _invalid_output()
+        raise _invalid_output("unknown_currency_token")
     return restored
 
 
@@ -1248,7 +1252,10 @@ def _invalid_request(message: str) -> AppError:
     return AppError(code="INVALID_TRANSLATION_REQUEST", message=message, status_code=422)
 
 
-def _invalid_output() -> AppError:
+def _invalid_output(reason: str | None = None) -> AppError:
+    if reason is not None:
+        # 원문과 생성문을 남기지 않고 실패한 계약만 구분한다.
+        logger.warning("Translation output rejected reason=%s", reason)
     return AppError(
         code="AI_INVALID_OUTPUT",
         message="The AI provider returned an invalid result.",
