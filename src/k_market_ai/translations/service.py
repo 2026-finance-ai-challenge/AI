@@ -117,6 +117,7 @@ DISCLOSURE_TEXT_MAX_CHARACTERS = 6_000
 DISCLOSURE_TEXT_CONCURRENCY = 8
 
 BoundedText = Annotated[str, Field(min_length=1, max_length=120_000)]
+DisclosureCellText = Annotated[str, Field(min_length=0, max_length=120_000)]
 
 
 class _StructuredTitle(BaseModel):
@@ -175,7 +176,8 @@ class _StructuredDisclosureTableItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^value-[0-9]+$")
-    translated_text: BoundedText = Field(max_length=120_000)
+    # DART 테이블은 병합셀 구조를 표현하는 빈 문자열 셀을 포함한다.
+    translated_text: DisclosureCellText
 
 
 class _StructuredDisclosureText(BaseModel):
@@ -1118,7 +1120,7 @@ def _rebuild_translated_table(
         translated = item.translated_text.strip()
         if target_locale.lower().split("-", maxsplit=1)[0] == "en":
             translated = _normalize_english_output(translated)
-        if not translated:
+        if not translated and expected[item.id].strip():
             raise _invalid_output()
         translations[item.id] = translated
     if translations.keys() != expected.keys():

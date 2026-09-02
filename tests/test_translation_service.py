@@ -488,6 +488,26 @@ def test_disclosure_section_preserves_table_keys_and_non_string_values() -> None
     assert responses.arguments["max_output_tokens"] == 16_384
 
 
+def test_disclosure_section_preserves_blank_table_cells() -> None:
+    table = json.dumps([["보고의무발생일 :", ""], ["", "2026-09-02"]], ensure_ascii=False)
+    source_hash = _hash(canonical_disclosure_section(None, None, table))
+    responses = DisclosureResponses(
+        {},
+        (SimpleNamespace(id="value-0", translated_text="Reporting obligation date:"),),
+    )
+
+    result = asyncio.run(
+        _service(responses).translate_disclosure_section(
+            source_hash, None, None, table, "en", "section-v1"
+        )
+    )
+
+    assert json.loads(result.translated_table_data_json or "null") == [
+        ["Reporting obligation date:", ""],
+        ["", "2026-09-02"],
+    ]
+
+
 def test_disclosure_section_rejects_hangul_in_english_output() -> None:
     source_hash = _hash(canonical_disclosure_section("제목", "본문", None))
     responses = DisclosureResponses(

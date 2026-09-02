@@ -37,7 +37,7 @@ AI 서비스는 데이터가 수집될 때마다 본문 전체를 번역하지 �
 
 뉴스 수집용 분류는 `/internal/v1/news/signals`, 제목 생성은 `/internal/v1/translations/titles`, 본문·Insight 생성은 `/internal/v1/news/narratives`로 분리했다. 기존 `/internal/v1/news/analysis`는 호환 기간에만 유지하며 Backend 전환 뒤 제거한다.
 
-뉴스 원문 해시는 제목·문단·전문 제공 상태를 키 정렬·공백 없는 UTF-8 JSON으로 직렬화해 계산한다. 공시 섹션 원문 해시는 heading·text·table JSON 문자열을 같은 방식으로 직렬화해 계산한다. AI 서비스는 해시를 다시 계산하고, 공시 표의 객체 키·배열 길이·비문자 값이 바뀐 결과를 저장 전에 거절한다.
+뉴스 원문 해시는 제목·문단·전문 제공 상태를 키 정렬·공백 없는 UTF-8 JSON으로 직렬화해 계산한다. 공시 섹션 원문 해시는 heading·text·table JSON 문자열을 같은 방식으로 직렬화해 계산한다. AI 서비스는 해시를 다시 계산하고, 공시 표의 객체 키·배열 길이·비문자 값이 바뀐 결과를 저장 전에 거절한다. DART 병합셀용 빈 문자열은 원문과 번역에서 그대로 허용하되, 원문 내용이 있는 셀의 빈 번역은 거절한다.
 
 ## 공시 RAG 언어 흐름
 
