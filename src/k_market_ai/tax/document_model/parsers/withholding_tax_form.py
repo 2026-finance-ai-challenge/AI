@@ -106,14 +106,16 @@ class WithholdingTaxFormParser(BaseDocumentParser):
         )
         birth_date = self._extract_iso_date(
             self._region_value(ocr_result, "birth_date")
-            or self._find_first(
+        ) or self._extract_iso_date(
+            self._find_first(
                 r"(?:생년월일|Date\s+of\s+Birth)\s*[:;]?\s*((?:19|20)\d{2}[-./]\d{1,2}[-./]\d{1,2})",
                 single_line,
             )
         )
         phone_number = self._extract_phone_number(
             self._region_value(ocr_result, "phone_number")
-            or self._find_first(
+        ) or self._extract_phone_number(
+            self._find_first(
                 r"(?:전화번호|거주지\s*전화|Phone|Tel)\s*[:;]?\s*(\+?\d[\d\s()-]{7,20}\d)",
                 single_line,
             )
