@@ -80,6 +80,9 @@ fi
 exec 9>"$DEPLOY_ROOT/.deploy.lock"
 flock 9
 umask 077
+# 구버전 Compose이면 환경·이미지·실행 서비스를 변경하기 전에 중단한다.
+docker compose --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" config --format json \
+  | python3 "$DEPLOY_ROOT/verify-ai-deployment.py"
 image_env_backup=$(mktemp "$DEPLOY_ROOT/.image.env.previous.XXXXXX")
 runtime_env_backup=$(mktemp "$DEPLOY_ROOT/.runtime.env.previous.XXXXXX")
 rollback_override=$(mktemp "$DEPLOY_ROOT/.ai.rollback.XXXXXX.yaml")

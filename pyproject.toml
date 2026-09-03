@@ -61,6 +61,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "SIM"]
 
+[tool.ruff.per-file-target-version]
+"deploy/*.py" = "py310"
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101"]
 
