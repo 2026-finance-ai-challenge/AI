@@ -39,7 +39,7 @@ def test_preview_fields_survive_document_response_mapping() -> None:
     assert fields.birth_date == "1985-06-15"
     assert fields.phone_number == "+1-555-555-1234"
     assert fields.address == "100 Example Road, USA"
-    assert fields.preview_version == 1
+    assert fields.preview_version == 2
 
 
 def residency_document() -> _PipelineDocument:

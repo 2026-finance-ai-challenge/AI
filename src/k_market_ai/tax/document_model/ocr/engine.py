@@ -213,7 +213,11 @@ class _TesseractOCR:
             timeout=20,
             env={**os.environ, "OMP_THREAD_LIMIT": "1"},
         )
-        rows = list(csv.DictReader(StringIO(result.stdout.decode("utf-8")), delimiter="\t"))
+        rows = list(
+            csv.DictReader(
+                StringIO(result.stdout.decode("utf-8")), delimiter="\t", quoting=csv.QUOTE_NONE
+            )
+        )
         grouped: dict[tuple[str, ...], list[dict[str, str]]] = {}
         for row in rows:
             if row.get("level") != "5" or not row.get("text", "").strip():

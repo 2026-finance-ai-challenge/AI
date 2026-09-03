@@ -46,7 +46,7 @@ class TaxDocumentFields(BaseModel):
     birth_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     phone_number: str | None = Field(default=None, max_length=80)
     address: str | None = Field(default=None, max_length=1000)
-    preview_version: int | None = Field(default=None, ge=0, le=1)
+    preview_version: int | None = Field(default=None, ge=0, le=2)
 
 
 class TaxDocumentIssue(BaseModel):
@@ -466,7 +466,7 @@ def _fields(item: _PipelineDocument) -> TaxDocumentFields:
         birth_date=_date(source.get("birth_date")),
         phone_number=_text(source.get("phone_number"), 80),
         address=_text(source.get("address"), 1000),
-        preview_version=1,
+        preview_version=2,
     )
 
 
