@@ -143,13 +143,8 @@ class OpenAIAnswerAdapter:
             for citation_id in claim.citation_ids
         ):
             raise RagProviderError("Answer provider cited an unknown source")
-        # 출처 연결은 모델의 괄호 표기 대신 검증된 문장별 ID로 구성한다.
-        answer = " ".join(
-            claim.text.strip()
-            + " "
-            + "".join(f"[{value}]" for value in dict.fromkeys(claim.citation_ids))
-            for claim in parsed.claims
-        )
+        # 출처 ID는 응답 본문이 아닌 검증된 citation_ids로만 전달한다.
+        answer = " ".join(claim.text.strip() for claim in parsed.claims)
         return GeneratedAnswer(
             answer=answer,
             sufficient_evidence=parsed.sufficient_evidence,

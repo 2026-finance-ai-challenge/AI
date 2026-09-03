@@ -130,7 +130,7 @@ def test_filing_language_and_citations_are_both_validated(locale, wrong_language
             asyncio.run(call)
     else:
         answer = asyncio.run(call)
-        assert answer.answer == sentence + " [C1]"
+        assert answer.answer == sentence
         assert answer.citation_ids == ("C1",)
     create.assert_awaited_once()
     assert (
@@ -237,7 +237,7 @@ def test_question_language_filing_schema_keeps_citation_and_language_validation(
     answer = asyncio.run(
         adapter.answer("When is release?" if locale == "en" else "언제 해제되나요?", [("C1", hit)])
     )
-    assert answer.answer == sentence + " [C1]"
+    assert answer.answer == sentence
     assert answer.answer_locale == locale
     create.assert_awaited_once()
     result["claims"][0]["citation_ids"] = ["C99"]
