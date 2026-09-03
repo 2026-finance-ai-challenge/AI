@@ -72,7 +72,8 @@ class PostgresRagRepository(RagRepository):
                               AND job.locked_at < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
                           )
                       )
-                    ORDER BY job.attempts DESC, job.available_at, job.created_at
+                    ORDER BY disclosure.filed_date DESC, job.business_key DESC,
+                             job.attempts DESC, job.available_at DESC, job.created_at DESC
                     FOR UPDATE OF job SKIP LOCKED
                     LIMIT 1
                 )
