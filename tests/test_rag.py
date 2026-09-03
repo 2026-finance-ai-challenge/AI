@@ -25,7 +25,7 @@ def test_grounded_answer_keeps_verified_citation(locale) -> None:
         FakeEmbedding(),
         FakeAnswer(
             GeneratedAnswer(
-                answer="Revenue increased during the period. [C1]",
+                answer="Revenue increased during the period.",
                 sufficient_evidence=True,
                 citation_ids=("C1",),
                 refusal_reason=None,

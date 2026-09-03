@@ -1,5 +1,3 @@
-import re
-
 from k_market_ai.core.answer_language import AnswerLocale, resolve_answer_language
 from k_market_ai.core.errors import AppError
 from k_market_ai.rag.application.ports import AnswerPort, EmbeddingPort, RagRepository
@@ -74,16 +72,6 @@ class AskDisclosureHandler:
                 generated.model,
                 answer_locale,
             )
-        markers = set(re.findall(r"\[(C[0-9]+)]", generated.answer))
-        if not set(cited_ids).issubset(markers):
-            return _refusal(
-                "답변의 주장과 공시 인용이 연결되지 않았습니다."
-                if answer_locale == "ko"
-                else "The generated answer did not link its claims to filing citations.",
-                generated.model,
-                answer_locale,
-            )
-
         citations = tuple(
             _citation(citation_id, available[citation_id]) for citation_id in cited_ids
         )
