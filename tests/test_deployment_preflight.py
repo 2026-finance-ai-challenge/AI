@@ -49,5 +49,14 @@ def test_preflight_precedes_mutation_and_is_uploaded_with_script():
     assert "deploy/deploy-ai.sh deploy/verify-ai-deployment.py" in workflow
 
 
+def test_rag_worker_is_replaced_with_the_same_ai_release_after_api_verification():
+    script = (DEPLOY / "deploy-ai.sh").read_text()
+    worker_start = "up -d --no-deps rag-worker"
+    assert "pull ai-api rag-worker" in script
+    assert worker_start in script
+    assert script.rindex(worker_start) > script.index("AI 분류 계약 확인 실패: 필수 응답 누락")
+    assert "RAG worker 기동 확인에 실패했습니다." in script
+
+
 def test_preflight_supports_host_python_not_only_container_python():
     ast.parse((DEPLOY / "verify-ai-deployment.py").read_text(), feature_version=(3, 10))
