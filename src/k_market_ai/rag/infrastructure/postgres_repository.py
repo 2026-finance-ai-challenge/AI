@@ -19,6 +19,7 @@ from k_market_ai.rag.domain.models import (
     SectionKind,
     SourceSection,
 )
+from k_market_ai.rag.domain.selected_translation import translated_selection_exists
 from k_market_ai.rag.infrastructure.payload_codec import decode_sections
 
 INDEX_JOB_TYPE = "DISCLOSURE_EMBEDDING"
@@ -155,6 +156,15 @@ class PostgresRagRepository(RagRepository):
             if disclosure_row is None:
                 raise LookupError("Disclosure does not exist")
             disclosure_id = UUID(str(disclosure_row[0]))
+
+            current_cursor = await connection.execute(
+                "SELECT id FROM disclosure_document WHERE disclosure_id = %s AND is_current",
+                (disclosure_id,),
+            )
+            current_ids = {UUID(str(row[0])) for row in await current_cursor.fetchall()}
+            if {item.chunk.document_id for item in chunks} != current_ids:
+                # 색인 도중 원문 버전이 바뀌면 새 버전의 대기 작업을 완료 처리하지 않는다.
+                return
 
             await connection.execute(
                 "UPDATE disclosure_chunk SET is_current = FALSE WHERE disclosure_id = %s",
@@ -422,11 +432,28 @@ class PostgresRagRepository(RagRepository):
         receipt_number: str,
         section_id: UUID,
         normalized_text: str,
+        translation_source_hash: str | None = None,
     ) -> bool:
         sections = await self.load_current_sections(receipt_number)
-        return any(
-            section.id == section_id and normalized_text in normalize_text(section.text)
-            for section in sections
+        section = next((section for section in sections if section.id == section_id), None)
+        if section is None or not normalized_text:
+            return False
+        if translation_source_hash is None:
+            return normalized_text in normalize_text(section.text)
+        async with self._pool.connection() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT source_text, result_payload
+                FROM translation_memory
+                WHERE content_kind = 'DISCLOSURE_SECTION' AND source_hash = %s
+                  AND target_locale = 'en' AND translation_version = 'disclosure-section-v4'
+                  AND status = 'READY'
+                """,
+                (translation_source_hash,),
+            )
+            row = await cursor.fetchone()
+        return row is not None and translated_selection_exists(
+            section, normalized_text, translation_source_hash, row[0], row[1]
         )
 
     async def search(

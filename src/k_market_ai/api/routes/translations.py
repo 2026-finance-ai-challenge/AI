@@ -1,7 +1,12 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from k_market_ai.api.internal_auth import authenticate_internal
@@ -10,6 +15,20 @@ from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import TranslationService
 
 router = APIRouter(tags=["translations"])
+GENERATION_DEADLINE_SECONDS = 180
+
+
+@asynccontextmanager
+async def generation_deadline() -> AsyncIterator[None]:
+    try:
+        # 세마포어 대기와 모든 분할 요청을 포함해 백엔드 작업 임대 안에서 끝낸다.
+        async with asyncio.timeout(GENERATION_DEADLINE_SECONDS):
+            yield
+    except TimeoutError as exception:
+        raise AppError(
+            code="AI_PROVIDER_TIMEOUT", message="Translation generation timed out.", status_code=503
+        ) from exception
+
 
 BoundedParagraph = Annotated[str, Field(min_length=1, max_length=120_000)]
 
@@ -102,11 +121,12 @@ async def translate_titles(
     body: TitleTranslationRequest,
     _: Annotated[None, Depends(authenticate_internal)],
 ) -> TitleTranslationResponse:
-    result = await _service(request).translate_titles(
-        tuple(TitleSource(item.id, item.source_hash, item.source_text) for item in body.items),
-        body.target_locale,
-        body.translation_version,
-    )
+    async with generation_deadline():
+        result = await _service(request).translate_titles(
+            tuple(TitleSource(item.id, item.source_hash, item.source_text) for item in body.items),
+            body.target_locale,
+            body.translation_version,
+        )
     return TitleTranslationResponse(
         items=tuple(
             TitleTranslationItemResponse(
@@ -129,14 +149,15 @@ async def translate_news_narrative(
     body: NewsNarrativeRequest,
     _: Annotated[None, Depends(authenticate_internal)],
 ) -> NewsNarrativeResponse:
-    result = await _service(request).translate_news_narrative(
-        body.source_hash,
-        body.title,
-        body.paragraphs,
-        body.content_availability,
-        body.target_locale,
-        body.translation_version,
-    )
+    async with generation_deadline():
+        result = await _service(request).translate_news_narrative(
+            body.source_hash,
+            body.title,
+            body.paragraphs,
+            body.content_availability,
+            body.target_locale,
+            body.translation_version,
+        )
     return NewsNarrativeResponse(
         source_hash=result.source_hash,
         translated_paragraphs=result.translated_paragraphs,
@@ -151,6 +172,31 @@ async def translate_news_narrative(
     )
 
 
+@router.post("/internal/v1/news/narratives/stream")
+async def stream_news_narrative(
+    request: Request,
+    body: NewsNarrativeRequest,
+    _: Annotated[None, Depends(authenticate_internal)],
+) -> StreamingResponse:
+    service = _service(request)
+
+    async def events() -> AsyncIterator[str]:
+        try:
+            async with generation_deadline():
+                async for event in service.stream_news_bundle(
+                    body.source_hash,
+                    body.title,
+                    body.paragraphs,
+                    body.content_availability,
+                    body.translation_version,
+                ):
+                    yield json.dumps(event, ensure_ascii=False) + "\n"
+        except AppError as exception:
+            yield json.dumps({"type": "error", "code": exception.code}) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
+
+
 @router.post(
     "/internal/v1/disclosures/section-translations",
     response_model=DisclosureSectionTranslationResponse,
@@ -160,14 +206,15 @@ async def translate_disclosure_section(
     body: DisclosureSectionTranslationRequest,
     _: Annotated[None, Depends(authenticate_internal)],
 ) -> DisclosureSectionTranslationResponse:
-    result = await _service(request).translate_disclosure_section(
-        body.source_hash,
-        body.heading,
-        body.text,
-        body.table_data_json,
-        body.target_locale,
-        body.translation_version,
-    )
+    async with generation_deadline():
+        result = await _service(request).translate_disclosure_section(
+            body.source_hash,
+            body.heading,
+            body.text,
+            body.table_data_json,
+            body.target_locale,
+            body.translation_version,
+        )
     return DisclosureSectionTranslationResponse(
         receipt_number=body.receipt_number,
         document_version=body.document_version,

@@ -24,6 +24,7 @@ class ApiRagRuntime:
     pool: AsyncConnectionPool[AsyncConnection[object]]
     openai: AsyncOpenAI
     handler: AskDisclosureHandler
+    embedding: LocalEmbeddingAdapter
 
     @classmethod
     def create(cls, settings: Settings) -> ApiRagRuntime:
@@ -40,6 +41,7 @@ class ApiRagRuntime:
         return cls(
             pool=pool,
             openai=client,
+            embedding=embedding,
             handler=AskDisclosureHandler(
                 repository,
                 embedding,
@@ -49,6 +51,13 @@ class ApiRagRuntime:
 
     async def open(self) -> None:
         await self.pool.open(wait=True)
+        try:
+            # 캐시 권한·모델 누락을 첫 질문이 아니라 기동 검사에서 발견한다.
+            await self.embedding.warmup()
+        except Exception:
+            await self.pool.close()
+            await self.openai.close()
+            raise
 
     async def close(self) -> None:
         await self.pool.close()

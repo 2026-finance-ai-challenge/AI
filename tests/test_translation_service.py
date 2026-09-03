@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from types import SimpleNamespace
 
 import httpx
@@ -16,6 +17,8 @@ from k_market_ai.translations.service import (
     _currency_conversions,
     _restore_currency_amounts,
     _StructuredNewsSegmentItem,
+    _title_event_roles,
+    _title_output_schema,
     canonical_disclosure_section,
     canonical_news_source,
 )
@@ -27,13 +30,11 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     parsed = SimpleNamespace(
         items=(
             SimpleNamespace(
-                id="T2",
-                source_hash=second.source_hash,
+                id="title-1",
                 translated_text="Decision on Capital Increase with Consideration",
             ),
             SimpleNamespace(
-                id="T1",
-                source_hash=first.source_hash,
+                id="title-0",
                 translated_text="Samsung Electronics Unveils New Product",
             ),
         )
@@ -45,11 +46,154 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
 
     assert [item.id for item in result.items] == ["T1", "T2"]
     assert result.items[0].translated_text == "Samsung Electronics Unveils New Product"
-    assert responses.arguments["reasoning"] == {"effort": "minimal"}
-    assert responses.arguments["text"] == {"verbosity": "low"}
+    assert [item.source_hash for item in result.items] == [first.source_hash, second.source_hash]
+    assert responses.arguments["reasoning"] == {"effort": "low"}
+    assert "source_hash" not in json.loads(responses.arguments["input"])["items"][0]
+    assert responses.arguments["text"]["verbosity"] == "low"
+    assert responses.arguments["text"]["format"]["type"] == "json_schema"
     assert responses.arguments["store"] is False
     assert responses.arguments["timeout"] == 90.0
     assert responses.arguments["max_output_tokens"] == 16_384
+    schema = responses.arguments["text"]["format"]["schema"]
+    assert schema["properties"]["items"]["minItems"] == 2
+    assert schema["properties"]["items"]["maxItems"] == 2
+
+
+def test_title_schema_requires_each_items_tokens_without_cjk() -> None:
+    schema = _title_output_schema(
+        {
+            "title-0": _title("one", "삼전닉스 투자 1조원, 지원 20억원"),
+            "title-1": _title("two", "삼성전기 신제품 공개"),
+        }
+    )
+    variants = schema["properties"]["items"]["items"]["anyOf"]
+    first = variants[0]["properties"]["translated_text"]["pattern"]
+    second = variants[1]["properties"]["translated_text"]["pattern"]
+    assert variants[0]["properties"]["id"]["enum"] == ["title-0"]
+    assert variants[1]["properties"]["id"]["enum"] == ["title-1"]
+    valid = "__TERM_SAMJEONNIX__ invests __KRW_AMOUNT_0__, support __KRW_AMOUNT_1__"
+    assert re.fullmatch(first, valid)
+    assert not re.fullmatch(first, valid.replace("__KRW_AMOUNT_0__", ""))
+    assert not re.fullmatch(first, valid.replace("__TERM_SAMJEONNIX__", "삼전닉스"))
+    assert re.fullmatch(second, "Samsung Electro-Mechanics unveils a product")
+
+
+@pytest.mark.parametrize(
+    ("marker", "topic_role", "other_role"),
+    [
+        ("로부터", "claim_recipient", "claimant"),
+        ("으로부터", "claim_recipient", "claimant"),
+        (" 상대", "claimant", "claim_recipient"),
+        (" 상대로", "claimant", "claim_recipient"),
+    ],
+)
+def test_title_claim_roles_preserve_direction(marker, topic_role, other_role):
+    roles = _title_event_roles(f"Alpha, Beta{marker} 20억원 손배 청구")
+    assert roles == {
+        "topic": "Alpha",
+        "counterparty": "Beta",
+        "topic_role": topic_role,
+        "counterparty_role": other_role,
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Alpha와 Beta 손해배상 논의",
+        "Alpha, Beta와 상호 손배 청구",
+        "Alpha, Beta 상대 손배 청구 후 반소",
+        "Alpha, 손해배상 전망",
+    ],
+)
+def test_title_claim_roles_do_not_guess_ambiguous_cases(source):
+    assert _title_event_roles(source) is None
+
+
+@pytest.mark.parametrize(
+    ("source", "translated", "accepted"),
+    [
+        (
+            "한화오션, 러시아 아틱 LNG 2로부터 1조3700억 손배 청구",
+            "Hanwha Ocean seeks __KRW_AMOUNT_0__ in damages from Russia's Arctic LNG 2",
+            False,
+        ),
+        (
+            "한화오션, 러시아 아틱 LNG 2로부터 1조3700억 손배 청구",
+            "Hanwha Ocean faces __KRW_AMOUNT_0__ damages claim from Russia's Arctic LNG 2",
+            True,
+        ),
+        (
+            "Alpha, Beta 상대 20억원 손배 청구",
+            "Alpha faces __KRW_AMOUNT_0__ damages claim from Beta",
+            False,
+        ),
+        (
+            "Alpha, Beta 상대 20억원 손배 청구",
+            "Alpha seeks __KRW_AMOUNT_0__ in damages from Beta",
+            True,
+        ),
+    ],
+)
+def test_title_claim_direction_schema_and_server_reject_reversal(
+    source, translated, accepted, caplog
+):
+    item = _title("one", source)
+    schema = _title_output_schema({"title-0": item})
+    pattern = schema["properties"]["items"]["items"]["anyOf"][0]["properties"]["translated_text"][
+        "pattern"
+    ]
+    assert bool(re.fullmatch(pattern, translated)) is accepted
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=translated,
+                ),
+            )
+        )
+    )
+    if accepted:
+        result = asyncio.run(_service(responses).translate_titles((item,), "en", "title-v1"))
+        assert len(result.items) == 1
+    else:
+        with pytest.raises(AppError) as error:
+            asyncio.run(_service(responses).translate_titles((item,), "en", "title-v1"))
+        assert error.value.code == "AI_INVALID_OUTPUT"
+        assert "title_claim_direction_mismatch" in caplog.text
+    assert responses.calls == 1
+
+
+@pytest.mark.parametrize(
+    "translated",
+    [
+        "__KRW_AMOUNT_0__ and __KRW_AMOUNT_0__",
+        "__KRW_AMOUNT_0__ and __KRW_AMOUNT_7__",
+    ],
+)
+def test_title_does_not_silently_remove_duplicate_or_unknown_tokens(translated, caplog):
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=translated,
+                ),
+            )
+        )
+    )
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            _service(responses).translate_titles(
+                (_title("one", "삼성전기 투자 1조원"),),
+                "en",
+                "title-v1",
+            )
+        )
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert "title_protected_token_mismatch" in caplog.text
+    assert responses.calls == 1
 
 
 def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
@@ -62,15 +206,15 @@ def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_english_title_batch_rejects_hangul_in_provider_output() -> None:
+@pytest.mark.parametrize("untranslated_name", ["마더스제약", "iM證", "NH證"])
+def test_english_title_batch_rejects_hangul_in_provider_output(untranslated_name: str) -> None:
     source = _title("T1", "마더스제약 상장예비심사 신청")
     responses = FakeResponses(
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
-                    translated_text="마더스제약 Files for KOSDAQ Listing Review",
+                    id="title-0",
+                    translated_text=f"{untranslated_name} Files for KOSDAQ Listing Review",
                 ),
             )
         )
@@ -88,8 +232,7 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
+                    id="title-0",
                     translated_text=(
                         "Target Price at __KRW_AMOUNT_0__ After Raising __KRW_AMOUNT_1__"
                     ),
@@ -145,14 +288,20 @@ def test_currency_restoration_accepts_provider_token_punctuation_variants() -> N
     )
 
 
+def test_currency_range_qualifier_is_not_presented_as_an_item_counter() -> None:
+    from k_market_ai.translations.service import _protect_currency_amounts
+
+    protected, _ = _protect_currency_amounts("MLCC 1조원대 수주, 자동차 5대, 1억원대출")
+    assert protected == "MLCC 약 __KRW_AMOUNT_0__ 수주, 자동차 5대, __KRW_AMOUNT_1__대출"
+
+
 def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() -> None:
     source = _title("T1", "투자유치 344억")
     responses = FakeResponses(
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
+                    id="title-0",
                     translated_text="Raises 344 eok won in funding",
                 ),
             )
@@ -171,8 +320,7 @@ def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None
         SimpleNamespace(
             items=(
                 SimpleNamespace(
-                    id="T1",
-                    source_hash=source.source_hash,
+                    id="title-0",
                     translated_text=(
                         "'__TERM_SAMJEONNIX__' incentives lift spending; "
                         "consumption __KRW_AMOUNT_0__rises"
@@ -341,7 +489,7 @@ def test_news_narrative_rejects_non_english_summary_without_fallback() -> None:
     assert responses.calls == 2
 
 
-def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
+def test_news_narrative_rejects_oversized_summary_without_truncating_or_retrying() -> None:
     title = "요약 제한"
     paragraphs = ("회사는 신사업 계획을 발표했다.",)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -359,16 +507,13 @@ def test_news_narrative_enforces_one_short_sentence_without_retry() -> None:
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_news_narrative(
-            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+            )
         )
-    )
-
-    assert len(result.what.split()) <= 24
-    assert result.what.endswith((".", "…"))
-    assert len(result.what) <= 180
-    assert "second sentence" not in result.what.lower()
+    assert captured.value.code == "AI_INVALID_OUTPUT"
     assert responses.calls == 2
 
 
@@ -395,12 +540,27 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
     assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_news_segment_item_schema_accepts_provider_text_for_service_validation() -> None:
-    parsed = _StructuredNewsSegmentItem.model_validate(
-        {"id": "segment-0", "translated_text": "The company strengthened 전문 역량."}
-    )
+def test_news_segment_schema_rejects_cjk_before_service_validation() -> None:
+    from pydantic import ValidationError
 
-    assert parsed.translated_text.endswith("역량.")
+    with pytest.raises(ValidationError):
+        _StructuredNewsSegmentItem.model_validate(
+            {"id": "segment-0", "translated_text": "The company strengthened 전문 역량."}
+        )
+
+
+def test_disclosure_schema_forbids_untranslated_short_labels() -> None:
+    from pydantic import ValidationError
+
+    from k_market_ai.translations.service import _StructuredDisclosureText
+
+    for value in ("IR부", "<소속회사용>", "(주)우리금융지주", "변동"):
+        with pytest.raises(ValidationError):
+            _StructuredDisclosureText.model_validate({"translated_text": value})
+    assert (
+        _StructuredDisclosureText(translated_text="IR Department").translated_text
+        == "IR Department"
+    )
 
 
 def test_long_news_narrative_batches_bounded_segments() -> None:
@@ -543,7 +703,158 @@ def test_disclosure_table_translation_is_bounded_and_preserves_ascii_cells() -> 
     assert responses.batch_sizes == [18, 2]
 
 
-class FakeResponses:
+@pytest.mark.parametrize(
+    ("items", "reason"),
+    [
+        ((("value-9", "Example"),), "disclosure_table_unknown_id"),
+        ((("value-0", "Example"), ("value-0", "Example")), "disclosure_table_duplicate_id"),
+        ((("value-0", "Example"),), "disclosure_table_missing_id"),
+        ((("value-0", ""), ("value-1", "Example")), "disclosure_table_blank_translation"),
+        ((("value-0", "3 jo"), ("value-1", "Example")), "disclosure_table_invalid_english"),
+    ],
+)
+def test_table_rejection_logs_only_contract_reason(items, reason, caplog):
+    table = json.dumps([["비공개원문갑", "비공개원문을"]], ensure_ascii=False)
+    responses = DisclosureResponses(
+        {},
+        tuple(SimpleNamespace(id=identifier, translated_text=text) for identifier, text in items),
+    )
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            _service(responses).translate_disclosure_section(
+                _hash(canonical_disclosure_section(None, None, table)),
+                None,
+                None,
+                table,
+                "en",
+                "section-v1",
+            )
+        )
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert reason in caplog.text
+    assert "비공개원문" not in caplog.text
+    assert "Example" not in caplog.text
+    assert "3 jo" not in caplog.text
+
+
+def test_person_name_jo_is_not_a_romanized_currency_unit():
+    from k_market_ai.translations.service import _contains_invalid_english
+
+    assert not _contains_invalid_english("Jo joins the shortlist; Samjeonnix shares rise")
+    assert _contains_invalid_english("Funding reaches 3 jo")
+    assert _contains_invalid_english("Raises 344 eok won")
+
+
+@pytest.mark.parametrize(
+    ("source", "translated", "reason"),
+    [
+        ("삼전닉스 비공개원문", "Stocks rise", "title_protected_term_missing"),
+        ("삼성전자 비공개원문", "Funding 3 jo", "title_romanized_currency"),
+        ("투자 1조원 비공개원문", "Funding rises", "missing_currency_token"),
+    ],
+)
+def test_title_contract_failure_logs_hash_without_content(source, translated, reason, caplog):
+    item = _title("one", source)
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=translated,
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(AppError) as error:
+        asyncio.run(_service(responses).translate_titles((item,), "en", "title-v1"))
+
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert reason in caplog.text
+    assert item.source_hash in caplog.text
+    assert "비공개원문" not in caplog.text
+    assert translated not in caplog.text
+    assert responses.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("ids", "reason"),
+    [
+        (("title-7",), "title_unknown_id"),
+        (("title-0", "title-0"), "title_duplicate_id"),
+        (("title-0",), "title_missing_id"),
+    ],
+)
+def test_title_identity_failures_have_distinct_reasons(ids, reason, caplog):
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=tuple(
+                SimpleNamespace(id=identifier, translated_text="Company report")
+                for identifier in ids
+            )
+        )
+    )
+
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            _service(responses).translate_titles(
+                (_title("one", "첫 제목"), _title("two", "다음 제목")),
+                "en",
+                "title-v1",
+            )
+        )
+
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert reason in caplog.text
+    assert responses.calls == 1
+
+
+def test_incomplete_provider_output_is_not_parsed_or_retried(caplog):
+    class IncompleteResponses:
+        calls = 0
+
+        async def create(self, **arguments):
+            self.calls += 1
+            return SimpleNamespace(
+                status="incomplete",
+                output_text='{"items": [',
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                usage=SimpleNamespace(
+                    output_tokens=1001, output_tokens_details=SimpleNamespace(reasoning_tokens=800)
+                ),
+                id="resp-diagnostic",
+                _request_id="req-diagnostic",
+                model="gpt-5-nano",
+                max_output_tokens=16384,
+            )
+
+    responses = IncompleteResponses()
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            _service(responses).translate_titles(
+                (_title("one", "삼성전자 실적 발표"),), "en", "title-v1"
+            )
+        )
+    assert error.value.code == "AI_GENERATION_INCOMPLETE"
+    assert responses.calls == 1
+    assert "schema=_StructuredTitleBatch" in caplog.text
+    assert "reasoning_tokens=800" in caplog.text
+    assert "response_id=resp-diagnostic request_id=req-diagnostic" in caplog.text
+    assert "model=gpt-5-nano" in caplog.text
+    assert "effective_limit=16384" in caplog.text
+    assert "삼성전자" not in caplog.text
+    assert '{"items": [' not in caplog.text
+
+
+class CreatedResponseAdapter:
+    async def create(self, **arguments: object) -> SimpleNamespace:
+        response = await self.parse(**arguments)
+        return SimpleNamespace(
+            status="completed", output_text=json.dumps(response.output_parsed, default=vars)
+        )
+
+
+class FakeResponses(CreatedResponseAdapter):
     def __init__(self, parsed: object) -> None:
         self.parsed = parsed
         self.arguments: dict[str, object] = {}
@@ -578,7 +889,7 @@ class FakeResponses:
         return SimpleNamespace(output_parsed=self.parsed)
 
 
-class FailingResponses:
+class FailingResponses(CreatedResponseAdapter):
     def __init__(self, exception: OpenAIError) -> None:
         self.exception = exception
 
@@ -587,7 +898,7 @@ class FailingResponses:
         raise self.exception
 
 
-class SingleNewsResponse:
+class SingleNewsResponse(CreatedResponseAdapter):
     def __init__(self) -> None:
         self.calls = 0
         self.arguments: dict[str, object] = {}
@@ -619,7 +930,7 @@ class SingleNewsResponse:
         return SimpleNamespace(output_parsed=parsed)
 
 
-class DisclosureResponses:
+class DisclosureResponses(CreatedResponseAdapter):
     def __init__(
         self,
         text_outputs: dict[str, str],
@@ -643,7 +954,7 @@ class DisclosureResponses:
         )
 
 
-class EchoDisclosureResponses:
+class EchoDisclosureResponses(CreatedResponseAdapter):
     def __init__(self) -> None:
         self.arguments: dict[str, object] = {}
         self.batch_sizes: list[int] = []

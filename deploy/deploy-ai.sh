@@ -14,6 +14,9 @@ readonly LEGACY_RUNTIME="$DEPLOY_ROOT/hannah-runtime"
 runtime_temporary=""
 runtime_backup=""
 image_env_backup=""
+rollback_override=""
+runtime_env_backup=""
+deployment_verified=0
 runtime_swapped=0
 
 remove_runtime_tree() {
@@ -36,7 +39,7 @@ cleanup() {
   local status=$?
   trap - EXIT
 
-  if (( status != 0 && runtime_swapped == 1 )); then
+  if (( status != 0 && deployment_verified == 0 && runtime_swapped == 1 )); then
     local failed_runtime="$DEPLOY_ROOT/.kmarket-model-runtime.failed.$(date +%s)"
     if [[ -d "$MODEL_RUNTIME" ]]; then
       mv "$MODEL_RUNTIME" "$failed_runtime"
@@ -44,14 +47,15 @@ cleanup() {
     if [[ -d "$runtime_backup" ]]; then
       mv "$runtime_backup" "$MODEL_RUNTIME"
     fi
-    if [[ -f "$image_env_backup" ]]; then
+  fi
+  if (( status != 0 && deployment_verified == 0 )) && [[ -n "$image_env_backup" && -f "$image_env_backup" ]]; then
       cp "$image_env_backup" "$IMAGE_ENV"
       chmod 600 "$IMAGE_ENV"
-    fi
+      cp "$runtime_env_backup" "$RUNTIME_ENV"
 
     # 실패한 컨테이너가 새 런타임을 계속 참조하지 않도록 기존 배포를 다시 기동한다.
     docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" \
-      -f "$COMPOSE_FILE" up -d --wait --wait-timeout 900 ai-api rag-worker backend || true
+      -f "$COMPOSE_FILE" -f "$rollback_override" up -d --no-deps --wait --wait-timeout 900 ai-api || true
   fi
 
   if [[ -n "$runtime_temporary" && -d "$runtime_temporary" ]]; then
@@ -60,6 +64,8 @@ cleanup() {
   if [[ -n "$image_env_backup" && -f "$image_env_backup" ]]; then
     rm -f "$image_env_backup"
   fi
+  if [[ -n "$runtime_env_backup" ]]; then rm -f "$runtime_env_backup"; fi
+  if [[ -n "$rollback_override" ]]; then rm -f "$rollback_override"; fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -74,6 +80,14 @@ fi
 exec 9>"$DEPLOY_ROOT/.deploy.lock"
 flock 9
 umask 077
+image_env_backup=$(mktemp "$DEPLOY_ROOT/.image.env.previous.XXXXXX")
+runtime_env_backup=$(mktemp "$DEPLOY_ROOT/.runtime.env.previous.XXXXXX")
+rollback_override=$(mktemp "$DEPLOY_ROOT/.ai.rollback.XXXXXX.yaml")
+cp "$IMAGE_ENV" "$image_env_backup"
+cp "$RUNTIME_ENV" "$runtime_env_backup"
+previous_image=$(docker inspect --format '{{.Image}}' kmarket-ai-api-1)
+printf 'services:\n  ai-api:\n    image: "%s"\n' "$previous_image" >"$rollback_override"
+printf '%s\n' "$previous_image" >"$DEPLOY_ROOT/ai-last-good.image"
 
 # 모델 번들 설정을 새 키로 이관하되 현재 Compose 전환 전까지 기존 키는 유지한다.
 runtime_env_temporary=$(mktemp "$DEPLOY_ROOT/.runtime.env.XXXXXX")
@@ -81,8 +95,8 @@ awk -F= '$1 != "KMARKET_AI_MODEL_BUNDLE_COMMIT" && $1 != "KMARKET_AI_NEWS_NARRAT
   >"$runtime_env_temporary"
 printf '%s\n' \
   "KMARKET_AI_MODEL_BUNDLE_COMMIT=$MODEL_SOURCE_COMMIT" \
-  'KMARKET_AI_NEWS_NARRATIVE_PROMPT_VERSION=news-narrative-v7' \
-  'KMARKET_AI_FILING_SUMMARY_PROMPT_VERSION=filing-summary-v2' \
+  'KMARKET_AI_NEWS_NARRATIVE_PROMPT_VERSION=news-narrative-v12' \
+  'KMARKET_AI_FILING_SUMMARY_PROMPT_VERSION=filing-summary-v3' \
   'KMARKET_AI_PEER_PROMPT_VERSION=global-peer-narrative-v2' \
   >>"$runtime_env_temporary"
 chmod 600 "$runtime_env_temporary"
@@ -110,7 +124,12 @@ fi
 CHECKSUMS
 )
 
-# 대용량 학습 저장소에서 운영에 필요한 파일만 고정 커밋으로 받는다.
+# 같은 고정 모델은 복구 작업자가 참조 중인 디렉터리를 교체하지 않는다.
+if [[ "$(git -C "$MODEL_RUNTIME" rev-parse HEAD)" != "$MODEL_SOURCE_COMMIT" ]]; then
+  if docker ps --format '{{.Names}}' | grep -qx 'kmarket-rag-worker-1'; then
+    echo "복구 작업자가 실행 중이므로 다른 모델 번들로 교체할 수 없습니다." >&2
+    exit 1
+  fi
 runtime_temporary=$(mktemp -d "$DEPLOY_ROOT/.kmarket-model-runtime.XXXXXX")
 git clone --filter=blob:none --no-checkout --depth=1 --branch main \
   "$MODEL_SOURCE_REPOSITORY" "$runtime_temporary"
@@ -138,10 +157,11 @@ fi
 
 mkdir -p "$runtime_temporary/$(dirname "$MODEL_BASE")"
 cp -a "$MODEL_RUNTIME/$MODEL_BASE" "$runtime_temporary/$MODEL_BASE"
+fi
 
 # 교체 전 새 런타임의 코드, 분류 모델, 기반 모델을 모두 검증한다.
 (
-  cd "$runtime_temporary"
+  cd "${runtime_temporary:-$MODEL_RUNTIME}"
   sha256sum --check --strict <<'CHECKSUMS'
 04bb18037d28c59c487779531c90db5faa2e2136a3ca1dfe1d7af1a781ad6157  src/hannah_montana_ai/model_store/financial_nlp_ml.joblib
 df852dcddb8e76436f415153fe34e86b9671bfc2134d78be648df513acb6f3f6  src/hannah_montana_ai/model_store/k_fnspid_impact_news_ml.joblib
@@ -158,28 +178,27 @@ f9051b19e43e2a1be479bc0ed9e27e1e40a43a2a32f4bd6d585b3e7045f62654  src/hannah_mon
 05751a3bc3e907f9d7c92c93517b68416496febc167db9a7363dc729d809675c  artifacts/pretraining/kf-deberta-k-fnspid-v4-dapt-temporal-v2/merged_fp32/config.json
 CHECKSUMS
 )
+if [[ -n "$runtime_temporary" ]]; then
 chmod -R a=rX "$runtime_temporary"
-
 runtime_backup="$DEPLOY_ROOT/.kmarket-model-runtime.previous"
 mv "$MODEL_RUNTIME" "$runtime_backup"
 mv "$runtime_temporary" "$MODEL_RUNTIME"
 runtime_temporary=""
 runtime_swapped=1
+fi
 
 printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin >/dev/null
 unset GHCR_TOKEN
 
 temporary=$(mktemp "$DEPLOY_ROOT/.image.env.XXXXXX")
-image_env_backup=$(mktemp "$DEPLOY_ROOT/.image.env.previous.XXXXXX")
-cp "$IMAGE_ENV" "$image_env_backup"
 awk -F= '$1 != "AI_IMAGE_TAG" { print }' "$IMAGE_ENV" >"$temporary"
 printf 'AI_IMAGE_TAG=%s\n' "$1" >>"$temporary"
 chmod 600 "$temporary"
 mv "$temporary" "$IMAGE_ENV"
 
 cd "$DEPLOY_ROOT"
-docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" pull ai-api rag-worker
-docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" up -d --wait --wait-timeout 900 ai-api rag-worker backend
+docker compose --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" pull ai-api
+docker compose --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" up -d --no-deps --wait --wait-timeout 900 ai-api
 curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15102/actuator/health >/dev/null
 
 # 건강 확인만으로는 지연 로딩되는 분류 모델을 검증할 수 없어 실제 내부 계약을 호출한다.
@@ -225,9 +244,12 @@ required = {
 if not required.issubset(result):
     raise SystemExit("AI 분류 계약 확인 실패: 필수 응답 누락")
 PY
+deployment_verified=1
 
 # 분류 계약까지 통과한 뒤에만 이전 런타임을 제거한다.
-remove_runtime_tree "$runtime_backup"
+if [[ -n "$runtime_backup" ]]; then remove_runtime_tree "$runtime_backup"; fi
 runtime_backup=""
 runtime_swapped=0
-docker image prune --force --filter until=168h >/dev/null
+if [[ -f "$DEPLOY_ROOT/retain-images.py" ]]; then
+  python3 "$DEPLOY_ROOT/retain-images.py" --apply --already-locked
+fi

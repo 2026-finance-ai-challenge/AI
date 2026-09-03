@@ -35,7 +35,8 @@ def test_disclosure_insight_uses_only_structured_evidence_without_storage() -> N
     assert result.model == "test-summary-model"
     assert result.prompt_version == "filing-summary-test-v2"
     assert responses.arguments["store"] is False
-    assert responses.arguments["reasoning"] == {"effort": "minimal"}
+    assert responses.arguments["reasoning"] == {"effort": "low"}
+    assert result.what_ko == "회사가 새 시설을 승인했다."
     assert responses.arguments["text"] == {"verbosity": "low"}
     assert "The company approved a new facility." in str(responses.arguments["input"])
 
@@ -67,6 +68,9 @@ class FakeResponses:
         return SimpleNamespace(
             output_parsed=SimpleNamespace(
                 what="The company approved a new facility.",
+                what_ko="회사가 새 시설을 승인했다.",
+                why_ko="생산능력을 확대하기 위해서다.",
+                impact_ko="원문에 영향이 명시되지 않았다.",
                 why="The filing states that the facility will expand capacity.",
                 impact="The facility may increase production capacity.",
                 evidence_ids=("S1",),
@@ -82,6 +86,9 @@ class HangulResponses:
         return SimpleNamespace(
             output_parsed=SimpleNamespace(
                 what="한국항공우주 approved a facility.",
+                what_ko="회사가 새 시설을 승인했다.",
+                why_ko="생산능력을 확대하기 위해서다.",
+                impact_ko="원문에 영향이 명시되지 않았다.",
                 why="The filing states the reason.",
                 impact="The facility may increase capacity.",
                 evidence_ids=("S1",),

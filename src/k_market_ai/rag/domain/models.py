@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 
@@ -55,6 +56,7 @@ class MetadataEmbeddingJob:
 class SelectedContext:
     section_id: UUID
     text: str
+    translation_source_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,3 +103,4 @@ class GeneratedAnswer:
     citation_ids: tuple[str, ...]
     refusal_reason: str | None
     model: str
+    answer_locale: Literal["en", "ko"] = "en"
