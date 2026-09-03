@@ -295,38 +295,38 @@ class TranslationService:
         returned: dict[str, str] = {}
         for parsed_item in parsed.items:
             source_item = sources_by_id.get(parsed_item.id)
-            translated_text = (
-                _restore_currency_amounts(source_item.source_text, parsed_item.translated_text)
-                if source_item is not None
-                else parsed_item.translated_text
-            )
-            if source_item is not None:
-                translated_text = _restore_title_terms(source_item.source_text, translated_text)
-            if target_locale.lower().split("-", maxsplit=1)[0] == "en":
-                translated_text = _normalize_english_output(translated_text)
-            if (
-                source_item is None
-                or source_item.id in returned
-                or (
-                    target_locale.lower().split("-", maxsplit=1)[0] == "en"
-                    and (
-                        NON_ENGLISH_SCRIPT_PATTERN.search(translated_text) is not None
-                        or ROMANIZED_CURRENCY_PATTERN.search(translated_text) is not None
-                        or not _contains_required_currency_conversions(
-                            source_item.source_text,
-                            translated_text,
-                        )
-                        or not _contains_required_title_terms(
-                            source_item.source_text,
-                            translated_text,
-                        )
-                    )
+            if source_item is None:
+                raise _invalid_output("title_unknown_id")
+            if source_item.id in returned:
+                raise _invalid_output("title_duplicate_id")
+            try:
+                translated_text = _restore_currency_amounts(
+                    source_item.source_text, parsed_item.translated_text
                 )
-            ):
-                raise _invalid_output()
+                translated_text = _restore_title_terms(source_item.source_text, translated_text)
+                if target_locale.lower().split("-", maxsplit=1)[0] == "en":
+                    translated_text = _normalize_english_output(translated_text)
+                    if NON_ENGLISH_SCRIPT_PATTERN.search(translated_text):
+                        raise _invalid_output("title_non_english_script")
+                    if ROMANIZED_CURRENCY_PATTERN.search(translated_text):
+                        raise _invalid_output("title_romanized_currency")
+                    if not _contains_required_currency_conversions(
+                        source_item.source_text, translated_text
+                    ):
+                        raise _invalid_output("title_currency_conversion_missing")
+                    if not _contains_required_title_terms(source_item.source_text, translated_text):
+                        raise _invalid_output("title_protected_term_missing")
+            except AppError:
+                # 원문 대신 검증한 해시로 작업과 실패 계약을 연결한다.
+                logger.warning(
+                    "Title validation failed item=%s source_hash=%s",
+                    parsed_item.id,
+                    source_item.source_hash,
+                )
+                raise
             returned[source_item.id] = translated_text
         if returned.keys() != expected.keys():
-            raise _invalid_output()
+            raise _invalid_output("title_missing_id")
         ordered = tuple(
             TitleTranslation(item.id, item.source_hash, returned[item.id]) for item in items
         )
@@ -714,11 +714,21 @@ class TranslationService:
             # 종료 상태를 확인한 뒤 파싱해 잘린 JSON을 정상 출력의 검증 오류로 오인하지 않는다.
             if response.status != "completed":
                 logger.warning(
-                    "OpenAI translation stopped status=%s reason=%s limit=%s output_tokens=%s",
+                    "OpenAI translation stopped status=%s reason=%s limit=%s output_tokens=%s "
+                    "reasoning_tokens=%s schema=%s model=%s response_id=%s request_id=%s",
                     response.status,
                     response.incomplete_details.reason if response.incomplete_details else None,
                     max_output_tokens,
                     response.usage.output_tokens if response.usage else None,
+                    getattr(
+                        getattr(response.usage, "output_tokens_details", None),
+                        "reasoning_tokens",
+                        None,
+                    ),
+                    result_type.__name__,
+                    getattr(response, "model", None),
+                    getattr(response, "id", None),
+                    getattr(response, "_request_id", None),
                 )
                 raise AppError(
                     code="AI_GENERATION_INCOMPLETE",

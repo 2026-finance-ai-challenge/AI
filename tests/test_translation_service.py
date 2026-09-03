@@ -602,7 +602,71 @@ def test_person_name_jo_is_not_a_romanized_currency_unit():
     assert _contains_invalid_english("Raises 344 eok won")
 
 
-def test_incomplete_provider_output_is_not_parsed_or_retried():
+@pytest.mark.parametrize(
+    ("source", "translated", "reason"),
+    [
+        ("삼전닉스 비공개원문", "Stocks rise", "title_protected_term_missing"),
+        ("삼성전자 비공개원문", "Funding 3 jo", "title_romanized_currency"),
+        ("투자 1조원 비공개원문", "Funding rises", "missing_currency_token"),
+    ],
+)
+def test_title_contract_failure_logs_hash_without_content(source, translated, reason, caplog):
+    item = _title("one", source)
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=translated,
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(AppError) as error:
+        asyncio.run(_service(responses).translate_titles((item,), "en", "title-v1"))
+
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert reason in caplog.text
+    assert item.source_hash in caplog.text
+    assert "비공개원문" not in caplog.text
+    assert translated not in caplog.text
+    assert responses.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("ids", "reason"),
+    [
+        (("title-7",), "title_unknown_id"),
+        (("title-0", "title-0"), "title_duplicate_id"),
+        (("title-0",), "title_missing_id"),
+    ],
+)
+def test_title_identity_failures_have_distinct_reasons(ids, reason, caplog):
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=tuple(
+                SimpleNamespace(id=identifier, translated_text="Company report")
+                for identifier in ids
+            )
+        )
+    )
+
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            _service(responses).translate_titles(
+                (_title("one", "첫 제목"), _title("two", "다음 제목")),
+                "en",
+                "title-v1",
+            )
+        )
+
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert reason in caplog.text
+    assert responses.calls == 1
+
+
+def test_incomplete_provider_output_is_not_parsed_or_retried(caplog):
     class IncompleteResponses:
         calls = 0
 
@@ -612,7 +676,12 @@ def test_incomplete_provider_output_is_not_parsed_or_retried():
                 status="incomplete",
                 output_text='{"items": [',
                 incomplete_details=SimpleNamespace(reason="max_output_tokens"),
-                usage=SimpleNamespace(output_tokens=1001),
+                usage=SimpleNamespace(
+                    output_tokens=1001, output_tokens_details=SimpleNamespace(reasoning_tokens=800)
+                ),
+                id="resp-diagnostic",
+                _request_id="req-diagnostic",
+                model="gpt-5-nano",
             )
 
     responses = IncompleteResponses()
@@ -624,6 +693,12 @@ def test_incomplete_provider_output_is_not_parsed_or_retried():
         )
     assert error.value.code == "AI_GENERATION_INCOMPLETE"
     assert responses.calls == 1
+    assert "schema=_StructuredTitleBatch" in caplog.text
+    assert "reasoning_tokens=800" in caplog.text
+    assert "response_id=resp-diagnostic request_id=req-diagnostic" in caplog.text
+    assert "model=gpt-5-nano" in caplog.text
+    assert "삼성전자" not in caplog.text
+    assert '{"items": [' not in caplog.text
 
 
 class CreatedResponseAdapter:
