@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from types import SimpleNamespace
 
 import httpx
@@ -16,6 +17,8 @@ from k_market_ai.translations.service import (
     _currency_conversions,
     _restore_currency_amounts,
     _StructuredNewsSegmentItem,
+    _title_event_roles,
+    _title_output_schema,
     canonical_disclosure_section,
     canonical_news_source,
 )
@@ -51,6 +54,146 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert responses.arguments["store"] is False
     assert responses.arguments["timeout"] == 90.0
     assert responses.arguments["max_output_tokens"] == 16_384
+    schema = responses.arguments["text"]["format"]["schema"]
+    assert schema["properties"]["items"]["minItems"] == 2
+    assert schema["properties"]["items"]["maxItems"] == 2
+
+
+def test_title_schema_requires_each_items_tokens_without_cjk() -> None:
+    schema = _title_output_schema(
+        {
+            "title-0": _title("one", "삼전닉스 투자 1조원, 지원 20억원"),
+            "title-1": _title("two", "삼성전기 신제품 공개"),
+        }
+    )
+    variants = schema["properties"]["items"]["items"]["anyOf"]
+    first = variants[0]["properties"]["translated_text"]["pattern"]
+    second = variants[1]["properties"]["translated_text"]["pattern"]
+    assert variants[0]["properties"]["id"]["enum"] == ["title-0"]
+    assert variants[1]["properties"]["id"]["enum"] == ["title-1"]
+    valid = "__TERM_SAMJEONNIX__ invests __KRW_AMOUNT_0__, support __KRW_AMOUNT_1__"
+    assert re.fullmatch(first, valid)
+    assert not re.fullmatch(first, valid.replace("__KRW_AMOUNT_0__", ""))
+    assert not re.fullmatch(first, valid.replace("__TERM_SAMJEONNIX__", "삼전닉스"))
+    assert re.fullmatch(second, "Samsung Electro-Mechanics unveils a product")
+
+
+@pytest.mark.parametrize(
+    ("marker", "topic_role", "other_role"),
+    [
+        ("로부터", "claim_recipient", "claimant"),
+        ("으로부터", "claim_recipient", "claimant"),
+        (" 상대", "claimant", "claim_recipient"),
+        (" 상대로", "claimant", "claim_recipient"),
+    ],
+)
+def test_title_claim_roles_preserve_direction(marker, topic_role, other_role):
+    roles = _title_event_roles(f"Alpha, Beta{marker} 20억원 손배 청구")
+    assert roles == {
+        "topic": "Alpha",
+        "counterparty": "Beta",
+        "topic_role": topic_role,
+        "counterparty_role": other_role,
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Alpha와 Beta 손해배상 논의",
+        "Alpha, Beta와 상호 손배 청구",
+        "Alpha, Beta 상대 손배 청구 후 반소",
+        "Alpha, 손해배상 전망",
+    ],
+)
+def test_title_claim_roles_do_not_guess_ambiguous_cases(source):
+    assert _title_event_roles(source) is None
+
+
+@pytest.mark.parametrize(
+    ("source", "translated", "accepted"),
+    [
+        (
+            "한화오션, 러시아 아틱 LNG 2로부터 1조3700억 손배 청구",
+            "Hanwha Ocean seeks __KRW_AMOUNT_0__ in damages from Russia's Arctic LNG 2",
+            False,
+        ),
+        (
+            "한화오션, 러시아 아틱 LNG 2로부터 1조3700억 손배 청구",
+            "Hanwha Ocean faces __KRW_AMOUNT_0__ damages claim from Russia's Arctic LNG 2",
+            True,
+        ),
+        (
+            "Alpha, Beta 상대 20억원 손배 청구",
+            "Alpha faces __KRW_AMOUNT_0__ damages claim from Beta",
+            False,
+        ),
+        (
+            "Alpha, Beta 상대 20억원 손배 청구",
+            "Alpha seeks __KRW_AMOUNT_0__ in damages from Beta",
+            True,
+        ),
+    ],
+)
+def test_title_claim_direction_schema_and_server_reject_reversal(
+    source, translated, accepted, caplog
+):
+    item = _title("one", source)
+    schema = _title_output_schema({"title-0": item})
+    pattern = schema["properties"]["items"]["items"]["anyOf"][0]["properties"]["translated_text"][
+        "pattern"
+    ]
+    assert bool(re.fullmatch(pattern, translated)) is accepted
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=translated,
+                ),
+            )
+        )
+    )
+    if accepted:
+        result = asyncio.run(_service(responses).translate_titles((item,), "en", "title-v1"))
+        assert len(result.items) == 1
+    else:
+        with pytest.raises(AppError) as error:
+            asyncio.run(_service(responses).translate_titles((item,), "en", "title-v1"))
+        assert error.value.code == "AI_INVALID_OUTPUT"
+        assert "title_claim_direction_mismatch" in caplog.text
+    assert responses.calls == 1
+
+
+@pytest.mark.parametrize(
+    "translated",
+    [
+        "__KRW_AMOUNT_0__ and __KRW_AMOUNT_0__",
+        "__KRW_AMOUNT_0__ and __KRW_AMOUNT_7__",
+    ],
+)
+def test_title_does_not_silently_remove_duplicate_or_unknown_tokens(translated, caplog):
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=translated,
+                ),
+            )
+        )
+    )
+    with pytest.raises(AppError) as error:
+        asyncio.run(
+            _service(responses).translate_titles(
+                (_title("one", "삼성전기 투자 1조원"),),
+                "en",
+                "title-v1",
+            )
+        )
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert "title_protected_token_mismatch" in caplog.text
+    assert responses.calls == 1
 
 
 def test_title_batch_rejects_missing_or_extra_provider_items() -> None:
@@ -682,6 +825,7 @@ def test_incomplete_provider_output_is_not_parsed_or_retried(caplog):
                 id="resp-diagnostic",
                 _request_id="req-diagnostic",
                 model="gpt-5-nano",
+                max_output_tokens=16384,
             )
 
     responses = IncompleteResponses()
@@ -697,6 +841,7 @@ def test_incomplete_provider_output_is_not_parsed_or_retried(caplog):
     assert "reasoning_tokens=800" in caplog.text
     assert "response_id=resp-diagnostic request_id=req-diagnostic" in caplog.text
     assert "model=gpt-5-nano" in caplog.text
+    assert "effective_limit=16384" in caplog.text
     assert "삼성전자" not in caplog.text
     assert '{"items": [' not in caplog.text
 

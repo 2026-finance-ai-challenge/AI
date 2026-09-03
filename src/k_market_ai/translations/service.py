@@ -39,6 +39,22 @@ the approximation as 'around' rather than appending 'units'. Do not add facts. R
 supplied short item ID exactly once. The server owns source hashes; do not generate hashes.
 Return only the requested schema."""
 
+TITLE_ROLE_INSTRUCTIONS = """Preserve who acts and who receives the action, including passive
+headlines with an omitted verb. In 'X, Y ...', the comma introduces X's topic and does NOT mean
+'X and Y'. When event_roles are provided, use those source-derived actor roles: a claim_recipient
+faces a claim brought by the claimant. Do not combine opposing parties into a joint actor.
+Keep the topic company first. For a claim_recipient say 'faces ... damages claim from ...';
+for a claimant say 'seeks ... damages from ...'. These verb directions are validated.
+'X, Y로부터 손배 청구' means X faces a damages claim FROM Y;
+it does not mean X files a claim against Y. 'X, Y 상대 손배 청구' means X seeks damages FROM Y.
+피소 and 제소 are opposite roles: faces a lawsuit versus files a lawsuit. Likewise, distinguish
+winning an order FROM a customer from placing an order WITH a supplier. Preserve allegation,
+proposal, expectation and confirmation as stated; do not promote them to established facts.
+Each item's protected tokens must appear exactly once in source order inside that item's
+complete English title. Never move a token to another item or append a missing amount as a
+separate note. A headline that ends mid-word is truncated input: preserve the ellipsis without
+inventing the missing claim. Return every supplied ID once, even for near-identical headlines."""
+
 HANGUL_PATTERN = re.compile(r"[\u3131-\u318e\uac00-\ud7a3]")
 NON_ENGLISH_SCRIPT_PATTERN = re.compile(
     r"[\u3131-\u318e\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7a3]"
@@ -278,7 +294,7 @@ class TranslationService:
             expected[item.id] = item
         sources_by_id = {f"title-{index}": item for index, item in enumerate(items)}
         parsed = await self._parse(
-            TITLE_INSTRUCTIONS,
+            TITLE_INSTRUCTIONS + "\n\n" + TITLE_ROLE_INSTRUCTIONS,
             {
                 "target_locale": target_locale,
                 "translation_version": translation_version,
@@ -291,6 +307,7 @@ class TranslationService:
             request_timeout=self._title_timeout,
             max_output_tokens=TITLE_MAX_OUTPUT_TOKENS,
             reasoning_effort="low",
+            output_schema=_title_output_schema(sources_by_id),
         )
         returned: dict[str, str] = {}
         for parsed_item in parsed.items:
@@ -300,6 +317,8 @@ class TranslationService:
             if source_item.id in returned:
                 raise _invalid_output("title_duplicate_id")
             try:
+                _verify_title_claim_direction(source_item.source_text, parsed_item.translated_text)
+                _verify_title_tokens(source_item, parsed_item.translated_text)
                 translated_text = _restore_currency_amounts(
                     source_item.source_text, parsed_item.translated_text
                 )
@@ -689,6 +708,7 @@ class TranslationService:
         request_timeout: float | None = None,
         max_output_tokens: int | None = None,
         reasoning_effort: Literal["minimal", "low"] = "minimal",
+        output_schema: dict[str, Any] | None = None,
     ) -> Result:
         effective_timeout = request_timeout if request_timeout is not None else 30.0
         try:
@@ -704,7 +724,7 @@ class TranslationService:
                             "type": "json_schema",
                             "name": result_type.__name__,
                             "strict": True,
-                            "schema": result_type.model_json_schema(),
+                            "schema": output_schema or result_type.model_json_schema(),
                         },
                     },
                     max_output_tokens=max_output_tokens,
@@ -715,7 +735,8 @@ class TranslationService:
             if response.status != "completed":
                 logger.warning(
                     "OpenAI translation stopped status=%s reason=%s limit=%s output_tokens=%s "
-                    "reasoning_tokens=%s schema=%s model=%s response_id=%s request_id=%s",
+                    "reasoning_tokens=%s schema=%s model=%s response_id=%s request_id=%s "
+                    "effective_limit=%s",
                     response.status,
                     response.incomplete_details.reason if response.incomplete_details else None,
                     max_output_tokens,
@@ -729,6 +750,7 @@ class TranslationService:
                     getattr(response, "model", None),
                     getattr(response, "id", None),
                     getattr(response, "_request_id", None),
+                    getattr(response, "max_output_tokens", None),
                 )
                 raise AppError(
                     code="AI_GENERATION_INCOMPLETE",
@@ -940,7 +962,7 @@ def _title_request_item(item: TitleSource, identifier: str) -> dict[str, object]
         _canonicalize_non_krw_quantities(item.source_text)
     )
     protected_source = protected_source.replace("삼전닉스", "__TERM_SAMJEONNIX__")
-    return {
+    request: dict[str, object] = {
         "id": identifier,
         "source_text": protected_source,
         "protected_currency_tokens": [token for token, _ in protected_amounts],
@@ -948,6 +970,111 @@ def _title_request_item(item: TitleSource, identifier: str) -> dict[str, object]
             ["__TERM_SAMJEONNIX__"] if "삼전닉스" in item.source_text else []
         ),
     }
+    roles = _title_event_roles(item.source_text)
+    if roles is not None:
+        request["event_roles"] = roles
+    return request
+
+
+def _title_event_roles(source: str) -> dict[str, str] | None:
+    # 쉼표 뒤 청구 방향이 명시된 단일 사건만 보조하고 반소·상호 청구는 추정하지 않는다.
+    if re.search(r"반소|맞소송|쌍방|양측|상호", source):
+        return None
+    topic = re.fullmatch(r"([^,，]{1,100})[,，]\s*(.+)", source)
+    if topic is None:
+        return None
+    claim = re.fullmatch(
+        r"(.{1,100}?)(으로부터|로부터|상대(?:로)?)\s+.*(?:손배|손해배상).*청구[.!…]?",
+        topic.group(2),
+    )
+    if claim is None:
+        return None
+    incoming = claim.group(2) in {"으로부터", "로부터"}
+    return {
+        "topic": topic.group(1).strip(),
+        "counterparty": claim.group(1).strip(),
+        "topic_role": "claim_recipient" if incoming else "claimant",
+        "counterparty_role": "claimant" if incoming else "claim_recipient",
+    }
+
+
+_TITLE_TOKEN_PATTERN = re.compile(r"__KRW_AMOUNT_[0-9]+__|__TERM_[A-Z_]+__")
+
+
+def _title_tokens(item: TitleSource) -> list[str]:
+    source = str(_title_request_item(item, "title-0")["source_text"])
+    return _TITLE_TOKEN_PATTERN.findall(source)
+
+
+def _title_output_schema(sources: dict[str, TitleSource]) -> dict[str, Any]:
+    # 항목별 금액 토큰을 생성 스키마에도 고정해 다른 제목의 제약과 섞이지 않게 한다.
+    english_span = ENGLISH_SCRIPT_SCHEMA_PATTERN.removeprefix("^").removesuffix("$")
+    variants = []
+    for identifier, source in sources.items():
+        pattern = "^" + english_span
+        roles = _title_event_roles(source.source_text)
+        if roles is not None:
+            verb = "faces" if roles["topic_role"] == "claim_recipient" else "seeks"
+            pattern += verb + english_span
+        pattern += "".join(re.escape(token) + english_span for token in _title_tokens(source))
+        if roles is not None:
+            relation = (
+                "damages claim from" if roles["topic_role"] == "claim_recipient" else "damages from"
+            )
+            pattern += relation + english_span
+        variants.append(
+            {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "enum": [identifier]},
+                    "translated_text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000,
+                        "pattern": pattern + "$",
+                    },
+                },
+                "required": ["id", "translated_text"],
+                "additionalProperties": False,
+            }
+        )
+    return {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "minItems": len(sources),
+                "maxItems": len(sources),
+                "items": {"anyOf": variants},
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+
+
+def _verify_title_tokens(source: TitleSource, translated: str) -> None:
+    expected = _title_tokens(source)
+    actual = _TITLE_TOKEN_PATTERN.findall(translated)
+    if actual == expected:
+        return
+    if any(token not in actual for token in expected if token.startswith("__KRW")):
+        raise _invalid_output("missing_currency_token")
+    if any(token not in actual for token in expected if token.startswith("__TERM")):
+        raise _invalid_output("title_protected_term_missing")
+    # 중복·다른 항목의 토큰을 조용히 삭제하거나 순서를 바꿔 성공 처리하지 않는다.
+    raise _invalid_output("title_protected_token_mismatch")
+
+
+def _verify_title_claim_direction(source: str, translated: str) -> None:
+    roles = _title_event_roles(source)
+    if roles is None:
+        return
+    incoming = roles["topic_role"] == "claim_recipient"
+    pattern = r"\bfaces\b.*\bdamages claim from\b" if incoming else r"\bseeks\b.*\bdamages from\b"
+    opposite = r"\bseeks\b|\bfiles\b" if incoming else r"\bfaces\b|\bsued by\b"
+    if not re.search(pattern, translated) or re.search(opposite, translated, re.I):
+        raise _invalid_output("title_claim_direction_mismatch")
 
 
 def _korean_number(value: str) -> Decimal:
