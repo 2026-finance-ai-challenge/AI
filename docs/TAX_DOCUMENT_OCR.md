@@ -17,6 +17,8 @@ Tesseract TSV의 단어를 페이지·블록·문단·줄 번호로 묶어 원�
 
 ## 내부 API
 
+제한세율 신청서의 `birth_date`, `phone_number`, `address`를 검증 응답에 보존한다. `preview_version=1`은 보조 필드 추출까지 수행한 결과이며, 판독되지 않은 값은 null로 유지한다. 별도 LLM 호출이나 추정값은 사용하지 않는다.
+
 - `POST /internal/v1/tax/documents/verify`: 문서 한 건의 OCR·필드·품질 검증
 - `POST /internal/v1/tax/documents/compare`: 저장된 세 종류의 개별 검증 결과를 받아 원본 교차검증 규칙 실행
 

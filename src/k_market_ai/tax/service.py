@@ -43,6 +43,10 @@ class TaxDocumentFields(BaseModel):
     apostille_country: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     treaty_country: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     investor_type: Literal["INDIVIDUAL", "CORPORATE"] | None = None
+    birth_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    phone_number: str | None = Field(default=None, max_length=80)
+    address: str | None = Field(default=None, max_length=1000)
+    preview_version: int | None = Field(default=None, ge=0, le=1)
 
 
 class TaxDocumentIssue(BaseModel):
@@ -459,6 +463,10 @@ def _fields(item: _PipelineDocument) -> TaxDocumentFields:
         document_number=_text(source.get("tin"), 200),
         treaty_country=_country(source.get("residency_country_code")),
         investor_type=normalized_investor,
+        birth_date=_date(source.get("birth_date")),
+        phone_number=_text(source.get("phone_number"), 80),
+        address=_text(source.get("address"), 1000),
+        preview_version=1,
     )
 
 
