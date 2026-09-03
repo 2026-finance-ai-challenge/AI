@@ -11,8 +11,35 @@ from k_market_ai.tax.service import (
     TaxCachedDocument,
     TaxDocumentFields,
     TaxDocumentService,
+    _fields,
     _PipelineDocument,
 )
+
+
+def test_preview_fields_survive_document_response_mapping() -> None:
+    fields = _fields(
+        _PipelineDocument(
+            api_type="REDUCED_TAX_APPLICATION",
+            extracted=ExtractedDocument(
+                document_type=DocumentType.WITHHOLDING_TAX_FORM,
+                source_path="application.png",
+                fields={
+                    "first_name": "Jane",
+                    "last_name": "Investor",
+                    "birth_date": "1985-06-15",
+                    "phone_number": "+1-555-555-1234",
+                    "address": "100 Example Road, USA",
+                },
+            ),
+            confidence=0.99,
+            expected_country="US",
+            investor_type="INDIVIDUAL",
+        )
+    )
+    assert fields.birth_date == "1985-06-15"
+    assert fields.phone_number == "+1-555-555-1234"
+    assert fields.address == "100 Example Road, USA"
+    assert fields.preview_version == 1
 
 
 def residency_document() -> _PipelineDocument:
