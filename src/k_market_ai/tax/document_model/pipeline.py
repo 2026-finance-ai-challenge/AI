@@ -56,8 +56,15 @@ class TaxDocumentPipeline:
         )
         if profile is not None:
             result.template_id = result.template_id or profile.template_id
-            if not result.regions and self._ocr_engine is not None:
-                result.regions = self._ocr_engine.run_regions(path, profile.ocr_regions)
+            preliminary = self._parsers[document_type].parse(result, template_source)
+            missing_fields = self._missing_region_fields(document_type, preliminary)
+            if not result.regions and self._ocr_engine is not None and missing_fields:
+                result.regions = self._ocr_engine.run_regions(
+                    path,
+                    tuple(
+                        region for region in profile.ocr_regions if region.name in missing_fields
+                    ),
+                )
 
         extracted = self._parsers[document_type].parse(result, template_source)
         extracted.template_id = result.template_id
@@ -85,3 +92,41 @@ class TaxDocumentPipeline:
             extracted_document=extracted,
             ocr_confidence=round(confidence if confidence is not None else 0.0, 4),
         )
+
+    def _missing_region_fields(
+        self,
+        document_type: DocumentType,
+        extracted: ExtractedDocument,
+    ) -> set[str]:
+        required = {
+            DocumentType.RESIDENCY_CERTIFICATE: (
+                "taxpayer_name",
+                "tin",
+                "tax_year",
+                "issue_date",
+            ),
+            DocumentType.APOSTILLE: (
+                "issuing_country",
+                "signed_by",
+                "signer_capacity",
+                "seal_owner",
+                "issued_at",
+                "issued_on",
+                "issuing_authority",
+                "certificate_number",
+            ),
+            DocumentType.WITHHOLDING_TAX_FORM: (
+                "last_name",
+                "first_name",
+                "middle_name",
+                "address",
+                "tin",
+                "birth_date",
+                "phone_number",
+                "residency_country",
+                "residency_country_code",
+                "dividend_tax_rate",
+                "signature_date",
+            ),
+        }[document_type]
+        return {field for field in required if not str(extracted.fields.get(field) or "").strip()}

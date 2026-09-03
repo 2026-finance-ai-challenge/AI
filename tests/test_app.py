@@ -169,7 +169,7 @@ def test_rag_endpoint_returns_english_answer_with_source_reference() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["answer"] == "Revenue increased due to overseas demand. [C1]"
+    assert response.json()["answer"] == "Revenue increased due to overseas demand."
     assert response.json()["citations"][0]["id"] == "C1"
     assert handler.receipt_number == "20260818800670"
 
@@ -437,7 +437,7 @@ class FakeRagHandler:
         assert question == "Why did revenue increase?"
         assert selected is None
         return RagAnswer(
-            answer="Revenue increased due to overseas demand. [C1]",
+            answer="Revenue increased due to overseas demand.",
             refused=False,
             refusal_reason=None,
             citations=(self._citation,),
