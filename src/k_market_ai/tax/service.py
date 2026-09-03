@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import logging
 import re
+import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -250,6 +253,7 @@ class TaxDocumentService:
         investor_type: str,
     ) -> _PipelineDocument:
         model_type = _model_type(document_type)
+        started = time.monotonic()
         suffix = _safe_suffix(file_name, content_type)
         temporary_path: Path | None = None
         try:
@@ -273,13 +277,16 @@ class TaxDocumentService:
                 expected_country=expected_country,
                 investor_type=investor_type,
             )
-        except (OSError, RuntimeError) as exception:
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exception:
             raise AppError(
                 code="TAX_OCR_FAILED",
                 message="The tax document could not be read by the OCR model.",
                 status_code=422,
             ) from exception
         finally:
+            logging.getLogger(__name__).info(
+                "Tax OCR finished type=%s seconds=%.2f", document_type, time.monotonic() - started
+            )
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
 
