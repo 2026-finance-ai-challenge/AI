@@ -56,6 +56,8 @@ cleanup() {
     # 실패한 컨테이너가 새 런타임을 계속 참조하지 않도록 기존 배포를 다시 기동한다.
     docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" \
       -f "$COMPOSE_FILE" -f "$rollback_override" up -d --no-deps --wait --wait-timeout 900 ai-api || true
+    docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" \
+      -f "$COMPOSE_FILE" -f "$rollback_override" up -d --no-deps rag-worker || true
   fi
 
   if [[ -n "$runtime_temporary" && -d "$runtime_temporary" ]]; then
@@ -89,7 +91,9 @@ rollback_override=$(mktemp "$DEPLOY_ROOT/.ai.rollback.XXXXXX.yaml")
 cp "$IMAGE_ENV" "$image_env_backup"
 cp "$RUNTIME_ENV" "$runtime_env_backup"
 previous_image=$(docker inspect --format '{{.Image}}' kmarket-ai-api-1)
-printf 'services:\n  ai-api:\n    image: "%s"\n' "$previous_image" >"$rollback_override"
+previous_rag_image=$(docker inspect --format '{{.Image}}' kmarket-rag-worker-1)
+printf 'services:\n  ai-api:\n    image: "%s"\n  rag-worker:\n    image: "%s"\n' \
+  "$previous_image" "$previous_rag_image" >"$rollback_override"
 printf '%s\n' "$previous_image" >"$DEPLOY_ROOT/ai-last-good.image"
 
 # 모델 번들 설정을 새 키로 이관하되 현재 Compose 전환 전까지 기존 키는 유지한다.
@@ -200,7 +204,7 @@ chmod 600 "$temporary"
 mv "$temporary" "$IMAGE_ENV"
 
 cd "$DEPLOY_ROOT"
-docker compose --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" pull ai-api
+docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" pull ai-api rag-worker
 docker compose --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" -f "$COMPOSE_FILE" up -d --no-deps --wait --wait-timeout 900 ai-api
 curl --fail --silent --show-error --max-time 10 http://127.0.0.1:15102/actuator/health >/dev/null
 
@@ -247,6 +251,15 @@ required = {
 if not required.issubset(result):
     raise SystemExit("AI 분류 계약 확인 실패: 필수 응답 누락")
 PY
+
+# 본문 임베딩 정책 변경은 worker 프로세스에도 같은 이미지가 적용되어야 한다.
+# 실행 중인 작업은 DB 임대 만료 뒤 새 worker가 안전하게 다시 선점한다.
+docker compose --profile worker --env-file "$RUNTIME_ENV" --env-file "$IMAGE_ENV" \
+  -f "$COMPOSE_FILE" up -d --no-deps rag-worker
+if ! docker inspect --format '{{.State.Running}}' kmarket-rag-worker-1 | grep -qx 'true'; then
+  echo "RAG worker 기동 확인에 실패했습니다." >&2
+  exit 1
+fi
 deployment_verified=1
 
 # 분류 계약까지 통과한 뒤에만 이전 런타임을 제거한다.
