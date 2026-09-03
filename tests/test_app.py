@@ -430,7 +430,9 @@ class FakeRagHandler:
         self._citation = citation
         self.receipt_number: str | None = None
 
-    async def ask(self, receipt_number: str, question: str, selected: object) -> RagAnswer:
+    async def ask(
+        self, receipt_number: str, question: str, selected: object, answer_locale: str = "en"
+    ) -> RagAnswer:
         self.receipt_number = receipt_number
         assert question == "Why did revenue increase?"
         assert selected is None
@@ -565,6 +567,7 @@ class FakeMarketAgentService:
         history: tuple[object, ...],
         evidence: tuple[object, ...],
         safety_identifier: str,
+        answer_locale: str = "en",
     ) -> AgentAnswer:
         self.safety_identifier = safety_identifier
         assert context_type == "STOCK"

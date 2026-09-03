@@ -1,5 +1,6 @@
 import re
 
+from k_market_ai.core.answer_language import AnswerLocale, resolve_answer_language
 from k_market_ai.core.errors import AppError
 from k_market_ai.rag.application.ports import AnswerPort, EmbeddingPort, RagRepository
 from k_market_ai.rag.domain.chunker import normalize_text
@@ -11,7 +12,7 @@ from k_market_ai.rag.domain.models import (
     SelectedContext,
 )
 
-PROMPT_VERSION = "filing-grounded-v1"
+PROMPT_VERSION = "filing-grounded-v8"
 MIN_RELEVANCE = 0.28
 SEARCH_LIMIT = 6
 REFUSAL_MESSAGE = "I could not find sufficient evidence in this filing to answer that question."
@@ -33,7 +34,9 @@ class AskDisclosureHandler:
         receipt_number: str,
         question: str,
         selected: SelectedContext | None,
+        answer_locale: AnswerLocale = "auto",
     ) -> RagAnswer:
+        answer_locale = resolve_answer_language(question, answer_locale)
         selected_text = await self._validate_selected(receipt_number, selected)
         query = question if selected_text is None else f"{question}\nSelected text: {selected_text}"
         vector = (await self._embedding.embed([query]))[0]
@@ -46,11 +49,11 @@ class AskDisclosureHandler:
         )
         relevant = [hit for hit in hits if hit.selected_priority <= 1 or hit.score >= MIN_RELEVANCE]
         if not relevant:
-            return _refusal()
+            return _refusal(answer_locale=answer_locale)
 
         contexts = [(f"C{index}", hit) for index, hit in enumerate(relevant, start=1)]
         try:
-            generated = await self._answer.answer(question, contexts)
+            generated = await self._answer.answer(question, contexts, answer_locale)
         except RagProviderError as exception:
             raise AppError(
                 code="MODEL_UNAVAILABLE",
@@ -59,20 +62,26 @@ class AskDisclosureHandler:
             ) from exception
 
         if not generated.sufficient_evidence:
-            return _refusal(generated.refusal_reason, generated.model)
+            return _refusal(generated.refusal_reason, generated.model, answer_locale)
 
         available = {context_id: hit for context_id, hit in contexts}
         cited_ids = tuple(dict.fromkeys(generated.citation_ids))
         if not cited_ids or any(citation_id not in available for citation_id in cited_ids):
             return _refusal(
-                "The generated answer did not contain valid filing citations.",
+                "답변에 유효한 공시 인용이 없습니다."
+                if answer_locale == "ko"
+                else "The generated answer did not contain valid filing citations.",
                 generated.model,
+                answer_locale,
             )
         markers = set(re.findall(r"\[(C[0-9]+)]", generated.answer))
         if not set(cited_ids).issubset(markers):
             return _refusal(
-                "The generated answer did not link its claims to filing citations.",
+                "답변의 주장과 공시 인용이 연결되지 않았습니다."
+                if answer_locale == "ko"
+                else "The generated answer did not link its claims to filing citations.",
                 generated.model,
+                answer_locale,
             )
 
         citations = tuple(
@@ -99,6 +108,7 @@ class AskDisclosureHandler:
             receipt_number,
             selected.section_id,
             normalized,
+            selected.translation_source_hash,
         ):
             raise AppError(
                 code="INVALID_SELECTED_CONTEXT",
@@ -123,11 +133,20 @@ def _citation(citation_id: str, hit: SearchHit) -> Citation:
     )
 
 
-def _refusal(reason: str | None = None, model: str | None = None) -> RagAnswer:
+def _refusal(
+    reason: str | None = None, model: str | None = None, answer_locale: AnswerLocale = "en"
+) -> RagAnswer:
     return RagAnswer(
-        answer=REFUSAL_MESSAGE,
+        answer="이 공시에서 질문에 답할 충분한 근거를 찾지 못했습니다."
+        if answer_locale == "ko"
+        else REFUSAL_MESSAGE,
         refused=True,
-        refusal_reason=reason or "No sufficiently relevant filing evidence was retrieved.",
+        refusal_reason=reason
+        or (
+            "질문과 충분히 관련된 공시 근거가 검색되지 않았습니다."
+            if answer_locale == "ko"
+            else "No sufficiently relevant filing evidence was retrieved."
+        ),
         citations=(),
         model=model,
         prompt_version=PROMPT_VERSION,

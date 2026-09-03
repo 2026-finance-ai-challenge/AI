@@ -18,6 +18,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 async def app_error_handler(request: Request, exception: Exception) -> JSONResponse:
     error = _as_app_error(exception)
+    if error.status_code >= 500:
+        logger.warning(
+            "AI 요청 실패 code=%s status=%s request_id=%s",
+            error.code,
+            error.status_code,
+            getattr(request.state, "request_id", None),
+        )
     return JSONResponse(
         status_code=error.status_code,
         content=_error_body(request, error.code, error.message),

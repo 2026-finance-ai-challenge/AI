@@ -33,6 +33,9 @@ class DisclosureInsightResponse(BaseModel):
     what: str | None
     why: str | None
     impact: str | None
+    what_ko: str | None
+    why_ko: str | None
+    impact_ko: str | None
     evidence_ids: tuple[str, ...]
     sufficient_evidence: bool
     refusal_reason: str | None
@@ -55,6 +58,9 @@ async def summarize_disclosure(
         what=result.what,
         why=result.why,
         impact=result.impact,
+        what_ko=result.what_ko,
+        why_ko=result.why_ko,
+        impact_ko=result.impact_ko,
         evidence_ids=result.evidence_ids,
         sufficient_evidence=result.sufficient_evidence,
         refusal_reason=result.refusal_reason,

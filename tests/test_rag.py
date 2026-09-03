@@ -3,6 +3,8 @@ from collections.abc import Sequence
 from datetime import timedelta
 from uuid import UUID, uuid4
 
+import pytest
+
 from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
 from k_market_ai.rag.domain.models import (
     EmbeddedChunk,
@@ -14,7 +16,8 @@ from k_market_ai.rag.domain.models import (
 )
 
 
-def test_grounded_answer_keeps_verified_citation() -> None:
+@pytest.mark.parametrize("locale", ["en", "ko"])
+def test_grounded_answer_keeps_verified_citation(locale) -> None:
     hit = _hit(score=0.8)
     repository = FakeRepository(hits=[hit])
     handler = AskDisclosureHandler(
@@ -31,14 +34,15 @@ def test_grounded_answer_keeps_verified_citation() -> None:
         ),
     )
 
-    answer = asyncio.run(handler.ask("20260818800670", "What changed?", None))
+    answer = asyncio.run(handler.ask("20260818800670", "What changed?", None, locale))
 
     assert answer.refused is False
     assert answer.citations[0].chunk_id == hit.chunk_id
     assert answer.citations[0].document_version == 1
 
 
-def test_irrelevant_retrieval_refuses_without_generation() -> None:
+@pytest.mark.parametrize("locale", ["en", "ko"])
+def test_irrelevant_retrieval_refuses_without_generation(locale) -> None:
     answer_port = FakeAnswer(None)
     handler = AskDisclosureHandler(
         FakeRepository(hits=[_hit(score=0.1)]),
@@ -46,11 +50,12 @@ def test_irrelevant_retrieval_refuses_without_generation() -> None:
         answer_port,
     )
 
-    answer = asyncio.run(handler.ask("20260818800670", "Unrelated question", None))
+    answer = asyncio.run(handler.ask("20260818800670", "Unrelated question", None, locale))
 
     assert answer.refused is True
     assert answer.citations == ()
     assert answer_port.called is False
+    assert ("근거" in answer.answer) == (locale == "ko")
 
 
 def test_invalid_selected_text_is_rejected() -> None:
@@ -74,6 +79,23 @@ def test_invalid_selected_text_is_rejected() -> None:
         raise AssertionError("Expected selected context validation error")
 
 
+def test_question_language_refusal_uses_current_question_without_invented_evidence() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    generate = AsyncMock(
+        return_value=GeneratedAnswer("", False, (), "관련 근거가 없습니다.", "test-model", "ko")
+    )
+    handler = AskDisclosureHandler(
+        FakeRepository(hits=[]), FakeEmbedding(), SimpleNamespace(answer=generate)
+    )
+    answer = asyncio.run(handler.ask("20260818800670", "배당 계획은 있나요?", None))
+    assert answer.refused is True
+    assert "근거" in answer.answer
+    assert answer.citations == ()
+    generate.assert_not_awaited()
+
+
 class FakeEmbedding:
     model = "test-embedding"
     dimensions = 3
@@ -91,6 +113,7 @@ class FakeAnswer:
         self,
         question: str,
         contexts: Sequence[tuple[str, SearchHit]],
+        answer_locale: str = "en",
     ) -> GeneratedAnswer:
         self.called = True
         assert question
@@ -137,6 +160,7 @@ class FakeRepository:
         receipt_number: str,
         section_id: UUID,
         normalized_text: str,
+        translation_source_hash: str | None = None,
     ) -> bool:
         return self._selected_text_valid
 
