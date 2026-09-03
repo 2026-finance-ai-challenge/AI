@@ -157,6 +157,8 @@ Backend 전용 내부 API 범위는 다음과 같다.
 
 ## 검증
 
+AI 배포는 환경·이미지 변경 전에 정식 Compose의 쓰기 가능한 모델 캐시 볼륨을 확인한다. `/home/kmarket/.cache` 마운트가 없거나 읽기 전용이면 실행 중 서비스를 건드리지 않고 중단한다. 구버전 운영 구성에서 전환할 때는 Backend의 최신 Compose를 먼저 적용한다. API만 교체하며 기존 RAG 작업자와 같은 커밋의 모델 디렉터리는 유지한다.
+
 ```shell
 uv run ruff check .
 uv run ruff format --check .

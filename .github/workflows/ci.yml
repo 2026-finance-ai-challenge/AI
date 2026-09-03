@@ -121,7 +121,7 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
           SSH_OPTIONS=(-i "$RUNNER_TEMP/ssh/key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o PreferredAuthentications=publickey,keyboard-interactive,password)
-          sshpass -e scp "${SSH_OPTIONS[@]}" deploy/deploy-ai.sh "ubuntu@$PROD_HOST:/opt/kmarket/deploy-ai.sh"
+          sshpass -e scp "${SSH_OPTIONS[@]}" deploy/deploy-ai.sh deploy/verify-ai-deployment.py "ubuntu@$PROD_HOST:/opt/kmarket/"
           {
             printf '%s\n' "$GHCR_USERNAME"
             printf '%s\n' "$GHCR_TOKEN"
