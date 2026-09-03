@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
 import os
 import re
+import shlex
 import shutil
+import subprocess
 import sys
 from collections.abc import Iterable
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -198,52 +201,45 @@ class _TesseractOCR:
         return [Image.fromarray(np.asarray(image).astype("uint8")).convert("RGB")]
 
     def _ocr_page(self, page: Image.Image) -> list[object]:
-        try:
-            import pytesseract
-            from pytesseract import Output
-        except ImportError as exc:
-            raise RuntimeError("pytesseract runtime is missing.") from exc
-
         processed = self._preprocess(page)
-        data = pytesseract.image_to_data(
-            processed,
-            lang=self._lang,
-            config=self._config,
-            output_type=Output.DICT,
+        buffer = BytesIO()
+        processed.save(buffer, format="PNG")
+        # 작은 영역 OCR에서 OpenMP 스레드 경쟁을 없애고 호출별 실행 시간을 제한한다.
+        result = subprocess.run(  # noqa: S603
+            ["tesseract", "stdin", "stdout", "-l", self._lang, *shlex.split(self._config), "tsv"],  # noqa: S607
+            input=buffer.getvalue(),
+            capture_output=True,
+            check=True,
+            timeout=20,
+            env={**os.environ, "OMP_THREAD_LIMIT": "1"},
         )
-        lines: list[object] = []
-        for index, text in enumerate(data.get("text", [])):
-            normalized_text = str(text).strip()
-            if not normalized_text:
+        rows = list(csv.DictReader(StringIO(result.stdout.decode("utf-8")), delimiter="\t"))
+        grouped: dict[tuple[str, ...], list[dict[str, str]]] = {}
+        for row in rows:
+            if row.get("level") != "5" or not row.get("text", "").strip():
                 continue
-            confidence = self._confidence(data.get("conf", [])[index])
-            left = float(data["left"][index])
-            top = float(data["top"][index])
-            width = float(data["width"][index])
-            height = float(data["height"][index])
+            key = tuple(row[field] for field in ("page_num", "block_num", "par_num", "line_num"))
+            grouped.setdefault(key, []).append(row)
+        lines: list[object] = []
+        # 원래 모델의 줄 단위 결과를 유지해야 필드 파서가 불필요한 영역 재OCR을 하지 않는다.
+        for words in grouped.values():
+            normalized_text = " ".join(word["text"].strip() for word in words)
+            confidences = [
+                value for word in words if (value := self._confidence(word["conf"])) is not None
+            ]
+            confidence = sum(confidences) / len(confidences) if confidences else 0.0
+            left = min(float(word["left"]) for word in words)
+            top = min(float(word["top"]) for word in words)
+            right = max(float(word["left"]) + float(word["width"]) for word in words)
+            bottom = max(float(word["top"]) + float(word["height"]) for word in words)
             box = [
                 [left, top],
-                [left + width, top],
-                [left + width, top + height],
-                [left, top + height],
+                [right, top],
+                [right, bottom],
+                [left, bottom],
             ]
             lines.append([box, (normalized_text, confidence)])
 
-        if not lines:
-            text = pytesseract.image_to_string(
-                processed,
-                lang=self._lang,
-                config=self._config,
-            ).strip()
-            if text:
-                width, height = processed.size
-                box = [
-                    [0.0, 0.0],
-                    [float(width), 0.0],
-                    [float(width), float(height)],
-                    [0.0, float(height)],
-                ]
-                lines.append([box, (text, None)])
         return lines
 
     def _preprocess(self, page: Image.Image) -> Image.Image:

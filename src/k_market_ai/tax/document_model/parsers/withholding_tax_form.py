@@ -544,7 +544,8 @@ class WithholdingTaxFormParser(BaseDocumentParser):
     def _clean_name_value(self, value: str | None) -> str | None:
         if not value:
             return None
-        cleaned = re.sub(r"\b(Last|First|Middle|Name)\b", " ", value, flags=re.IGNORECASE)
+        # 영역 경계에서 첫 글자가 잘린 영문 필드명은 값이 아닌 라벨로 제거한다.
+        cleaned = re.sub(r"\b(L?ast|F?irst|M?iddle|Name)\b", " ", value, flags=re.IGNORECASE)
         cleaned = re.sub(r"[^A-Za-z0-9 .'-]", " ", cleaned)
         cleaned = self._normalize_whitespace(cleaned)
         return cleaned or None
