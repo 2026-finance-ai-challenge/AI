@@ -102,7 +102,6 @@ awk -F= '$1 != "KMARKET_AI_MODEL_BUNDLE_COMMIT" && $1 != "KMARKET_AI_TITLE_TRANS
   >"$runtime_env_temporary"
 printf '%s\n' \
   "KMARKET_AI_MODEL_BUNDLE_COMMIT=$MODEL_SOURCE_COMMIT" \
-  'KMARKET_AI_NEWS_NARRATIVE_PROMPT_VERSION=news-narrative-v12' \
   'KMARKET_AI_FILING_SUMMARY_PROMPT_VERSION=filing-summary-v3' \
   'KMARKET_AI_PEER_PROMPT_VERSION=global-peer-narrative-v2' \
   'KMARKET_AI_AGENT_PROMPT_VERSION=market-agent-v8' \

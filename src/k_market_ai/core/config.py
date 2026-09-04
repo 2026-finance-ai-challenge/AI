@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     news_prompt_version: str = "news-intelligence-v2"
     term_prompt_version: str = "financial-term-v1"
     translation_model: str = "gpt-5-nano"
-    news_narrative_prompt_version: str = "news-narrative-v12"
     translation_max_concurrency: int = Field(default=8, ge=1, le=16)
     disclosure_section_prompt_version: str = "disclosure-section-translation-v7"
     title_translation_timeout_seconds: float = Field(default=90.0, ge=10.0, le=180.0)
@@ -51,6 +50,11 @@ class Settings(BaseSettings):
             "KMARKET_AI_HANA_EXPECTED_COMMIT",
         ),
     )
+
+    @property
+    def news_narrative_prompt_version(self) -> str:
+        # 다른 서비스의 배포 환경이 실제 실행 프롬프트 버전을 덮어쓰지 못하게 한다.
+        return "news-narrative-v13"
 
     @property
     def title_translation_prompt_version(self) -> str:
