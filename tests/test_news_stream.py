@@ -107,7 +107,7 @@ def test_one_request_streams_both_summaries_before_complete_body():
     "items",
     [
         [
-            {"id": "segment-0", "translated_text": "영문이 아니다."},
+            {"id": "segment-0", "translated_text": "   "},
             {"id": "segment-1", "translated_text": "Expansion."},
         ],
         [
@@ -133,6 +133,58 @@ def test_incomplete_summary_is_never_published():
     value = '{"summaries":' + json.dumps(SUMMARY)
     assert completed_summary(value[:-1]) is None
     assert completed_summary(value) is not None
+
+
+def test_expression_observation_does_not_block_or_rewrite_stream(caplog):
+    value = "Revenue is ₩700; company label 高 is quoted."
+    calls, events = generate(
+        [
+            {"id": "segment-0", "translated_text": value},
+            {"id": "segment-1", "translated_text": "Expansion."},
+        ]
+    )
+
+    async def run():
+        return [event async for event in events]
+
+    result = asyncio.run(run())[-1]
+    assert result["type"] == "complete"
+    assert result["result"]["translatedParagraphs"][0] == value
+    assert "english_expression_review" in caplog.text
+    assert value not in caplog.text
+    schema = calls[0]["text"]["format"]["schema"]
+    assert (
+        "pattern"
+        not in schema["$defs"]["_StructuredNewsSegmentItem"]["properties"]["translated_text"]
+    )
+    assert json.loads(calls[0]["input"])["items"][0] == {
+        "id": "segment-0",
+        "source_text": "회사가 투자를 발표했다.",
+    }
+    assert len(calls) == 1
+
+
+def test_quality_observer_failure_cannot_fail_translation(monkeypatch, caplog):
+    import k_market_ai.translations.service as service
+
+    def broken_observer(_):
+        raise ValueError("private article text")
+
+    monkeypatch.setattr(service, "_iter_korean_currency_matches", broken_observer)
+    calls, events = generate(
+        [
+            {"id": "segment-0", "translated_text": "Investment."},
+            {"id": "segment-1", "translated_text": "Expansion."},
+        ]
+    )
+
+    async def run():
+        return [event async for event in events]
+
+    assert asyncio.run(run())[-1]["type"] == "complete"
+    assert "News quality observer error" in caplog.text
+    assert "private article text" not in caplog.text
+    assert len(calls) == 1
 
 
 def test_provider_interruption_keeps_summary_without_storing_a_partial_body():
@@ -179,7 +231,16 @@ def test_provider_interruption_keeps_summary_without_storing_a_partial_body():
     assert "max_output_tokens" not in calls[0]
 
 
-def test_missing_currency_is_not_appended_as_an_unrelated_fallback():
+def test_news_currency_observation_does_not_reject_or_replace(caplog):
+    from k_market_ai.translations.service import _report_news_quality
+
+    translated = "Revenue increased."
+    _report_news_quality("매출 1조원", translated, source_hash="a" * 64, segment="segment-0")
+    assert "currency_expression_review" in caplog.text
+    assert translated not in caplog.text
+
+
+def test_shared_currency_guard_is_retained_for_non_news_callers():
     with pytest.raises(AppError):
         _restore_currency_amounts("매출 1조원", "Revenue increased.")
 
@@ -417,14 +478,12 @@ def test_stream_preserves_korean_amount_and_does_not_cut_english_currency_unit()
     source = ["회사가 34조 2천억 원을 투자한다."]
     summaries = {
         **SUMMARY,
-        "en": {**SUMMARY["en"], "what": "Investment totals __KRW_SEGMENT_0_AMOUNT_0__."},
-        "ko": {**SUMMARY["ko"], "what": "회사가 __KRW_SEGMENT_0_AMOUNT_0__을 투자한다."},
+        "en": {**SUMMARY["en"], "what": "Investment totals KRW 34.2 trillion."},
+        "ko": {**SUMMARY["ko"], "what": "회사가 34조 2천억 원을 투자한다."},
     }
     bundle = {
         "summaries": summaries,
-        "items": [
-            {"id": "segment-0", "translated_text": "Investment totals __KRW_SEGMENT_0_AMOUNT_0__."}
-        ],
+        "items": [{"id": "segment-0", "translated_text": "Investment totals KRW 34.2 trillion."}],
     }
     calls = []
 

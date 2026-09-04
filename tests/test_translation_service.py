@@ -487,7 +487,7 @@ def test_korean_news_narrative_uses_original_body_and_generates_korean_summary()
     assert responses.calls == 1
 
 
-def test_news_narrative_rejects_field_label_placeholders_without_fallback() -> None:
+def test_news_narrative_observes_placeholders_without_replacing_or_rejecting(caplog) -> None:
     title = "노선 확대"
     paragraphs = ("회사는 가을 수요에 대응해 노선을 확대했다.", "경쟁력을 강화할 계획이다.")
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -503,18 +503,17 @@ def test_news_narrative_rejects_field_label_placeholders_without_fallback() -> N
         )
     )
 
-    with pytest.raises(AppError) as captured:
-        asyncio.run(
-            _service(responses).translate_news_narrative(
-                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v3"
-            )
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v3"
         )
-
-    assert captured.value.code == "AI_INVALID_OUTPUT"
+    )
+    assert result.what == "What"
+    assert "summary_expression_review" in caplog.text
     assert responses.calls == 2
 
 
-def test_news_narrative_rejects_non_english_summary_without_fallback() -> None:
+def test_news_narrative_observes_summary_expression_without_rejecting(caplog) -> None:
     title = "채용 확대"
     paragraphs = ("회사는 인재 확보를 위해 채용을 확대했다.", "경쟁력을 강화할 계획이다.")
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -530,18 +529,17 @@ def test_news_narrative_rejects_non_english_summary_without_fallback() -> None:
         )
     )
 
-    with pytest.raises(AppError) as captured:
-        asyncio.run(
-            _service(responses).translate_news_narrative(
-                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
-            )
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
         )
-
-    assert captured.value.code == "AI_INVALID_OUTPUT"
+    )
+    assert result.why == "The company seeks more talent 高"
+    assert "english_expression_review" in caplog.text
     assert responses.calls == 2
 
 
-def test_news_narrative_rejects_oversized_summary_without_truncating_or_retrying() -> None:
+def test_news_narrative_observes_long_summary_without_truncating_or_retrying(caplog) -> None:
     title = "요약 제한"
     paragraphs = ("회사는 신사업 계획을 발표했다.",)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -559,17 +557,17 @@ def test_news_narrative_rejects_oversized_summary_without_truncating_or_retrying
         )
     )
 
-    with pytest.raises(AppError) as captured:
-        asyncio.run(
-            _service(responses).translate_news_narrative(
-                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
-            )
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
         )
-    assert captured.value.code == "AI_INVALID_OUTPUT"
+    )
+    assert result.what == long_summary
+    assert "summary_expression_review" in caplog.text
     assert responses.calls == 2
 
 
-def test_news_narrative_rejects_hangul_in_english_output() -> None:
+def test_news_narrative_observes_body_expression_without_rejecting(caplog) -> None:
     title = "실적 발표"
     paragraphs = ("매출이 증가했다.",)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -582,23 +580,22 @@ def test_news_narrative_rejects_hangul_in_english_output() -> None:
         )
     )
 
-    with pytest.raises(AppError) as captured:
-        asyncio.run(
-            _service(responses).translate_news_narrative(
-                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
-            )
+    result = asyncio.run(
+        _service(responses).translate_news_narrative(
+            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
         )
+    )
+    assert result.translated_paragraphs == ("매출 increased.",)
+    assert "english_expression_review" in caplog.text
 
-    assert captured.value.code == "AI_INVALID_OUTPUT"
 
-
-def test_news_segment_schema_rejects_cjk_before_service_validation() -> None:
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError):
+def test_news_segment_schema_validates_structure_not_expression() -> None:
+    assert (
         _StructuredNewsSegmentItem.model_validate(
             {"id": "segment-0", "translated_text": "The company strengthened 전문 역량."}
-        )
+        ).translated_text
+        == "The company strengthened 전문 역량."
+    )
 
 
 def test_disclosure_schema_forbids_untranslated_short_labels() -> None:
