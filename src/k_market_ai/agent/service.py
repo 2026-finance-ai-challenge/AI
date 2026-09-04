@@ -3,9 +3,10 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from openai import APITimeoutError, AsyncOpenAI, OpenAIError
-from openai.types.responses import ResponseInputParam
+from openai.types.responses import Response, ResponseInputParam
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from k_market_ai.core.answer_language import (
@@ -17,9 +18,9 @@ from k_market_ai.core.answer_language import (
 )
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
+from k_market_ai.translations.service import ENGLISH_SCRIPT_SCHEMA_PATTERN
 
 logger = logging.getLogger(__name__)
-ENGLISH_ANSWER_PATTERN = r"^[\x20-\x7E\n\r\t]*$"
 
 AGENT_INSTRUCTIONS = """You are K-Market Navigator, a bilingual information assistant
 for overseas investors exploring the Korean stock market. Treat the question, conversation, and
@@ -133,26 +134,35 @@ class MarketAgentService:
                 + question,
             }
         )
+        response: Response | None = None
         try:
             # 공통 클라이언트의 30초 제한과 분리하되 Backend의 120초보다 먼저 종료한다.
             async with asyncio.timeout(self._timeout):
-                response = await self._client.responses.parse(
+                response = await self._client.responses.create(
                     model=self._model,
                     instructions=AGENT_INSTRUCTIONS
                     + answer_language_instructions(language)
-                    + (
-                        " Use printable ASCII in all English fields and straight quotes."
-                        if language == "en"
-                        else ""
-                    ),
+                    + " Keep routine answers within 150 words unless details are requested.",
                     input=messages,
-                    text_format=_EnglishAgentAnswer if language == "en" else _KoreanAgentAnswer,
+                    text={
+                        "verbosity": "low",
+                        "format": {
+                            "type": "json_schema",
+                            "name": "market_agent_answer",
+                            "strict": True,
+                            "schema": _generation_schema(),
+                        },
+                    },
                     reasoning={"effort": "medium"},
                     max_output_tokens=16_000,
                     safety_identifier=safety_identifier,
                     store=False,
                     timeout=self._timeout,
                 )
+            # 완료 여부를 먼저 확인해야 불완전한 응답의 원인이 JSON 파싱에 가려지지 않는다.
+            _require_complete_response(response)
+            schema = _EnglishAgentAnswer if language == "en" else _KoreanAgentAnswer
+            parsed = schema.model_validate_json(response.output_text)
         except (APITimeoutError, TimeoutError) as exception:
             logger.warning("시장 Agent 생성 시간 초과 limit_seconds=%s", self._timeout)
             raise AppError(
@@ -161,6 +171,8 @@ class MarketAgentService:
                 status_code=503,
             ) from exception
         except ValidationError as exception:
+            if response is not None:
+                _log_response_failure(response, "schema_validation")
             logger.warning(
                 "시장 Agent 출력 스키마 실패 fields=%s",
                 [
@@ -180,14 +192,13 @@ class MarketAgentService:
                 message="The AI provider is temporarily unavailable.",
                 status_code=503,
             ) from exception
-        parsed = response.output_parsed
-        if parsed is None or not valid_answer_language(
+        if not valid_answer_language(
             (parsed.answer, parsed.refusal_reason, parsed.suggested_room_name, parsed.disclaimer),
             language,
         ):
             logger.warning(
                 "시장 Agent 출력 검증 실패 reason=%s locale=%s",
-                "missing_output" if parsed is None else "language",
+                "language",
                 language,
             )
             raise AppError(
@@ -208,13 +219,86 @@ class MarketAgentService:
         )
 
 
-class _EnglishAgentAnswer(_StructuredAgentAnswer):
-    answer: str = Field(min_length=1, max_length=10_000, pattern=ENGLISH_ANSWER_PATTERN)
-    refusal_reason: str | None = Field(
-        default=None, max_length=1_000, pattern=ENGLISH_ANSWER_PATTERN
+def _generation_schema() -> dict[str, Any]:
+    schema = _StructuredAgentAnswer.model_json_schema()
+    schema["required"] = list(schema["properties"])
+
+    def simplify(value: Any) -> None:
+        if isinstance(value, dict):
+            # 생성은 구조만 제한하고 언어·길이·값 범위는 완성된 결과에 검증한다.
+            for key in (
+                "pattern",
+                "minLength",
+                "maxLength",
+                "minItems",
+                "maxItems",
+                "minimum",
+                "maximum",
+                "default",
+            ):
+                value.pop(key, None)
+            for child in value.values():
+                simplify(child)
+        elif isinstance(value, list):
+            for child in value:
+                simplify(child)
+
+    simplify(schema)
+    schema["properties"]["answer"]["description"] = (
+        "A concise answer to the current question, normally 3-6 short sentences. "
+        "Preserve the exact financial period, scope and unit."
     )
-    suggested_room_name: str = Field(min_length=1, max_length=80, pattern=ENGLISH_ANSWER_PATTERN)
-    disclaimer: str = Field(min_length=1, max_length=500, pattern=ENGLISH_ANSWER_PATTERN)
+    return schema
+
+
+def _require_complete_response(response: Response) -> None:
+    if response.status != "completed":
+        _log_response_failure(response, "not_completed")
+        raise AppError(
+            code="AI_GENERATION_INCOMPLETE",
+            message="The AI provider did not finish the answer.",
+            status_code=503,
+        )
+    if any(
+        content.type == "refusal"
+        for item in response.output
+        if item.type == "message"
+        for content in item.content
+    ):
+        _log_response_failure(response, "refusal")
+        raise AppError(
+            code="AI_PROVIDER_REFUSAL",
+            message="The AI provider declined this answer.",
+            status_code=503,
+        )
+
+
+def _log_response_failure(response: Response, reason: str) -> None:
+    usage = response.usage
+    logger.warning(
+        "시장 Agent 응답 실패 reason=%s status=%s incomplete_reason=%s response_id=%s "
+        "model=%s output_tokens=%s reasoning_tokens=%s limit=%s output_chars=%s",
+        reason,
+        response.status,
+        getattr(response.incomplete_details, "reason", None),
+        response.id,
+        response.model,
+        getattr(usage, "output_tokens", None),
+        getattr(getattr(usage, "output_tokens_details", None), "reasoning_tokens", None),
+        response.max_output_tokens,
+        len(response.output_text),
+    )
+
+
+class _EnglishAgentAnswer(_StructuredAgentAnswer):
+    answer: str = Field(min_length=1, max_length=10_000, pattern=ENGLISH_SCRIPT_SCHEMA_PATTERN)
+    refusal_reason: str | None = Field(
+        default=None, max_length=1_000, pattern=ENGLISH_SCRIPT_SCHEMA_PATTERN
+    )
+    suggested_room_name: str = Field(
+        min_length=1, max_length=80, pattern=ENGLISH_SCRIPT_SCHEMA_PATTERN
+    )
+    disclaimer: str = Field(min_length=1, max_length=500, pattern=ENGLISH_SCRIPT_SCHEMA_PATTERN)
 
 
 class _KoreanAgentAnswer(_StructuredAgentAnswer):
