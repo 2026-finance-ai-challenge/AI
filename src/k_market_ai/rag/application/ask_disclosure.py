@@ -1,5 +1,6 @@
 import json
 import re
+from collections import Counter
 from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
@@ -274,6 +275,7 @@ def _financial_columns(rows: tuple[tuple[str, ...], ...]) -> str | None:
     if any(len(row) != width for row in rows[2:]):
         return None
     labels: list[str] = []
+    occurrences = Counter(row[0].strip() for row in rows[2:])
     parents: list[tuple[int, str]] = []
     for row in rows[2:]:
         label = row[0]
@@ -281,7 +283,11 @@ def _financial_columns(rows: tuple[tuple[str, ...], ...]) -> str | None:
         while parents and parents[-1][0] >= indent:
             parents.pop()
         # 원문의 들여쓰기로 구분된 지배기업·비지배지분 하위 항목은 상위 이름을 함께 준다.
-        labels.append(f"{parents[-1][1]} > {label.strip()}" if parents else label)
+        labels.append(
+            f"{parents[-1][1]} > {label.strip()}"
+            if parents and occurrences[label.strip()] > 1
+            else label
+        )
         parents.append((indent, label.strip()))
     columns = []
     for index, interval in enumerate(expected):
