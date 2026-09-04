@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -72,7 +73,13 @@ def test_legacy_explicit_language_keeps_strict_validation_without_an_extra_call(
     assert args["model"] == "gpt-5-nano"
     assert args["store"] is False
     schema = args["text"]["format"]["schema"]
-    assert "pattern" not in schema["properties"]["answer"]
+    pattern = schema["properties"]["answer"]["pattern"]
+    assert re.search(pattern, fields["answer"])
+    assert not re.search(pattern, "한글 문장" if locale == "en" else "English sentence")
+    for field in ("suggested_room_name", "disclaimer"):
+        assert schema["properties"][field]["pattern"] == pattern
+    refusal = schema["properties"]["refusal_reason"]["anyOf"]
+    assert next(item for item in refusal if item["type"] == "string")["pattern"] == pattern
     assert args["text"]["format"]["strict"] is True
 
 

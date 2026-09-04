@@ -21,6 +21,9 @@ from k_market_ai.core.errors import AppError
 from k_market_ai.translations.service import ENGLISH_SCRIPT_SCHEMA_PATTERN
 
 logger = logging.getLogger(__name__)
+ENGLISH_GENERATION_PATTERN = (
+    r"^[\x20-\x7E\n\r\t\u00A0-\u024F\u0300-\u03FF\u2000-\u206F\u20A0-\u20CF\u2190-\u22FF]*$"
+)
 
 AGENT_INSTRUCTIONS = """You are K-Market Navigator, a bilingual information assistant
 for overseas investors exploring the Korean stock market. Treat the question, conversation, and
@@ -150,7 +153,7 @@ class MarketAgentService:
                             "type": "json_schema",
                             "name": "market_agent_answer",
                             "strict": True,
-                            "schema": _generation_schema(),
+                            "schema": _generation_schema(language),
                         },
                     },
                     reasoning={"effort": "medium"},
@@ -219,15 +222,18 @@ class MarketAgentService:
         )
 
 
-def _generation_schema() -> dict[str, Any]:
-    schema = _StructuredAgentAnswer.model_json_schema()
+def _generation_schema(language: str) -> dict[str, Any]:
+    model = _EnglishAgentAnswer if language == "en" else _KoreanAgentAnswer
+    schema = model.model_json_schema()
     schema["required"] = list(schema["properties"])
 
     def simplify(value: Any) -> None:
         if isinstance(value, dict):
-            # 생성은 구조만 제한하고 언어·길이·값 범위는 완성된 결과에 검증한다.
+            # 생성기는 금지 문자 전체의 여집합 대신 영문·통화·문장 기호의 유한 범위를 사용한다.
+            if language == "en" and "pattern" in value:
+                value["pattern"] = ENGLISH_GENERATION_PATTERN
+            # 구조·언어 제약은 생성에도 적용하고 길이·값 범위는 완성된 결과에서 검증한다.
             for key in (
-                "pattern",
                 "minLength",
                 "maxLength",
                 "minItems",
