@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from k_market_ai.api.internal_auth import authenticate_internal
 from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
+from k_market_ai.translations.news_stream import BilingualSummary
 from k_market_ai.translations.service import TranslationService
 
 router = APIRouter(tags=["translations"])
@@ -72,6 +73,7 @@ class NewsNarrativeRequest(BaseModel):
     content_availability: Literal["FULL_ARTICLE", "SOURCE_EXCERPT"]
     target_locale: Literal["en", "ko"] = "en"
     translation_version: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9._-]+$")
+    cached_summaries: BilingualSummary | None = None
 
 
 class NewsNarrativeResponse(BaseModel):
@@ -189,6 +191,7 @@ async def stream_news_narrative(
                     body.paragraphs,
                     body.content_availability,
                     body.translation_version,
+                    body.cached_summaries.model_dump() if body.cached_summaries else None,
                 ):
                     yield json.dumps(event, ensure_ascii=False) + "\n"
         except AppError as exception:
