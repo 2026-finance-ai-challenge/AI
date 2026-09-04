@@ -279,6 +279,7 @@ class TranslationService:
         paragraphs: Sequence[str],
         content_availability: str,
         translation_version: str,
+        cached_summaries: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         from k_market_ai.translations.news_stream import stream_news_bundle
 
@@ -292,6 +293,7 @@ class TranslationService:
                 content_availability=content_availability,
                 translation_version=translation_version,
                 request_timeout=self._news_timeout,
+                cached_summaries=cached_summaries,
             ):
                 yield event
 
@@ -1142,7 +1144,7 @@ def _restore_currency_amounts(source_text: str, translated_text: str) -> str:
             raise ValueError("Protected currency token must contain an index")
         token_pattern = rf"_*KRW_?AMOUNT_?{index_match.group(0)}(?![0-9])_*"
         if re.search(token_pattern, restored, flags=re.I) is None:
-            if english_text.casefold() not in _normalize_english_output(restored).casefold():
+            if not _contains_currency_value(english_text, restored):
                 raise _invalid_output("missing_currency_token")
             continue
         restored = re.sub(
@@ -1158,6 +1160,31 @@ def _restore_currency_amounts(source_text: str, translated_text: str) -> str:
     return restored
 
 
+def _contains_currency_value(expected: str, translated: str) -> bool:
+    normalized = _normalize_english_output(translated)
+    if re.search(rf"(?<![\w.,]){re.escape(expected)}(?!\w|[.,]\d)", normalized, flags=re.I):
+        return True
+    # 동일 문장의 원화 나열에서만 '30 trillion and 40 trillion won'의 통화 생략을 허용한다.
+    if "KRW " not in normalized or re.search(
+        r"\b(?:USD|EUR|JPY|CNY|GBP|CHF|dollars?|euros?|yen|yuan|pounds?|francs?)\b|[$€£¥]",
+        normalized,
+        flags=re.I,
+    ):
+        return False
+    amount = expected.removeprefix("KRW ")
+    if not re.search(r"\b(?:million|billion|trillion)$", amount):
+        return False
+    return (
+        re.search(
+            rf"(?<![\w.,]){re.escape(amount)}(?!\w|[.,]\d)"
+            r"(?!\s+(?:shares?|people|units?|tons?|tonnes?|barrels?|orders?|vehicles?|users?|times)\b)",
+            normalized,
+            flags=re.I,
+        )
+        is not None
+    )
+
+
 def _restore_title_terms(source_text: str, translated_text: str) -> str:
     if "삼전닉스" not in source_text:
         return translated_text
@@ -1170,6 +1197,12 @@ def _normalize_optional_english_output(value: str | None) -> str | None:
 
 def _normalize_english_output(value: str) -> str:
     normalized = value
+    normalized = re.sub(
+        r"\b(\d[\d,]*(?:\.\d+)?)(\s+(?:trillion|billion|million))?\s+KRW\b",
+        lambda match: f"KRW {match.group(1)}{match.group(2) or ''}",
+        normalized,
+        flags=re.I,
+    )
     normalized = re.sub(
         r"\bKRW\s+(\d[\d,]*(?:\.\d+)?)\s+(trillion|billion|million)\s+won\b",
         r"KRW \1 \2",
@@ -1194,6 +1227,22 @@ def _normalize_english_output(value: str) -> str:
         normalized,
         flags=re.I,
     )
+    # 동일한 원화 금액의 숫자·영문 단위 표기를 Decimal로 비교 가능하게 통일한다.
+    normalized = re.sub(
+        r"\bKRW\s+((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
+        r"(?:\s+(trillion|billion|million))?\b",
+        lambda match: _format_krw(
+            Decimal(match.group(1).replace(",", ""))
+            * {
+                None: Decimal(1),
+                "million": Decimal(10**6),
+                "billion": Decimal(10**9),
+                "trillion": Decimal(10**12),
+            }[(match.group(2) or "").lower() or None]
+        ),
+        normalized,
+        flags=re.I,
+    )
     return re.sub(r"\s{2,}", " ", normalized).strip()
 
 
@@ -1208,7 +1257,8 @@ def _format_krw(won: Decimal) -> str:
             if "." in value:
                 value = value.rstrip("0").rstrip(".")
             return f"KRW {value} {label}"
-    return f"KRW {won:,.0f}"
+    value = format(won, ",f")
+    return "KRW " + (value.rstrip("0").rstrip(".") if "." in value else value)
 
 
 def _contains_required_currency_conversions(source_text: str, translated_text: str) -> bool:
