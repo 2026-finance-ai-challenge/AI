@@ -1,11 +1,12 @@
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Protocol
 from uuid import UUID
 
 from k_market_ai.core.answer_language import AnswerLocale
 from k_market_ai.rag.domain.models import (
     EmbeddedChunk,
+    FilingCandidate,
     GeneratedAnswer,
     IndexJob,
     MetadataEmbeddingJob,
@@ -34,6 +35,14 @@ class AnswerPort(Protocol):
 
 
 class RagRepository(Protocol):
+    async def evidence_candidates(
+        self,
+        stock_codes: Sequence[str],
+        from_date: date | None,
+        to_date: date | None,
+        financials: bool,
+    ) -> list[FilingCandidate]: ...
+
     async def claim_index_job(self, worker_id: str) -> IndexJob | None: ...
 
     async def load_current_sections(self, receipt_number: str) -> list[SourceSection]: ...

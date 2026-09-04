@@ -139,11 +139,132 @@ def test_missing_currency_is_not_appended_as_an_unrelated_fallback():
         _restore_currency_amounts("매출 1조원", "Revenue increased.")
 
 
+def test_equivalent_full_won_amount_is_not_rejected_as_missing_token():
+    from k_market_ai.translations.service import _normalize_english_output
+
+    result = _restore_currency_amounts("137만 9000원", "The price was KRW 1,379,000.")
+    assert _normalize_english_output(result) == "The price was KRW 1.379 million."
+    with pytest.raises(AppError):
+        _restore_currency_amounts("137만 9000원", "The price was KRW 1,378,000.")
+    with pytest.raises(AppError):
+        _restore_currency_amounts("137만 9000원", "The price was USD 1,379,000.")
+    assert _normalize_english_output("KRW 25.50") == "KRW 25.5"
+
+
+def test_body_retry_reuses_verified_bilingual_summary_without_regeneration():
+    calls = []
+    body = {
+        "items": [{"id": "segment-0", "translated_text": "The company announced an investment."}]
+    }
+
+    class BodyStream(FakeStream):
+        async def __aiter__(self):
+            yield SimpleNamespace(type="response.output_text.delta", delta=json.dumps(body))
+
+        async def get_final_response(self):
+            return SimpleNamespace(status="completed")
+
+    def stream(**kwargs):
+        calls.append(kwargs)
+        return BodyStream(body)
+
+    source = ["회사가 투자를 발표했다."]
+    canonical = canonical_news_source("투자 발표", source, "FULL_ARTICLE")
+
+    async def run():
+        return [
+            event
+            async for event in stream_news_bundle(
+                SimpleNamespace(responses=SimpleNamespace(stream=stream)),
+                model="gpt-5-nano",
+                source_hash=hashlib.sha256(canonical.encode()).hexdigest(),
+                title="투자 발표",
+                paragraphs=source,
+                content_availability="FULL_ARTICLE",
+                translation_version="news-bilingual-v1",
+                request_timeout=30,
+                cached_summaries=SUMMARY,
+            )
+        ]
+
+    events = asyncio.run(run())
+    assert len(events) == 1 and events[0]["type"] == "complete"
+    assert events[0]["result"]["summaries"] == SUMMARY
+    assert events[0]["result"]["bodyReady"] is True
+    assert "summaries" not in calls[0]["text"]["format"]["schema"]["properties"]
+    assert calls[0]["text"]["format"]["schema"]["properties"]["items"]["minItems"] == 1
+
+
 def test_valid_direct_currency_output_is_not_duplicated():
     assert (
         _restore_currency_amounts("매출 1조원", "Revenue reached KRW 1 trillion.")
         == "Revenue reached KRW 1 trillion."
     )
+
+
+@pytest.mark.parametrize("value", ["5,000 KRW", "5000 won", "KRW 5000"])
+def test_equivalent_currency_position_and_separator_are_not_rejected(value):
+    from k_market_ai.translations.service import _normalize_english_output
+
+    assert (
+        _normalize_english_output(_restore_currency_amounts("5000원 상승", f"Up {value}."))
+        == "Up KRW 5,000."
+    )
+
+
+def test_shared_won_unit_in_one_sentence_preserves_all_amounts():
+    translated = "KRW 70 trillion in dividends (30 trillion and 40 trillion respectively)."
+    assert (
+        _restore_currency_amounts("3분기 30조원, 4분기 40조원, 총 70조원", translated) == translated
+    )
+
+
+@pytest.mark.parametrize(
+    "translated",
+    [
+        "KRW 70 trillion plus 30 trillion dollars.",
+        "KRW 70 trillion plus 30 trillion shares.",
+        "KRW 70 trillion.",
+    ],
+)
+def test_shared_unit_does_not_accept_other_currencies_quantities_or_missing_amounts(translated):
+    with pytest.raises(AppError):
+        _restore_currency_amounts("30조원 및 70조원", translated)
+
+
+def test_sentence_units_return_to_original_paragraphs():
+    source = ["회사가 투자를 발표했다. 공장을 건설한다.", "내년 가동한다."]
+    bundle = {
+        "summaries": SUMMARY,
+        "items": [
+            {"id": "segment-0", "translated_text": "The company announced investment."},
+            {"id": "segment-1", "translated_text": "It will build a factory."},
+            {"id": "segment-2", "translated_text": "Operations begin next year."},
+        ],
+    }
+
+    async def run():
+        canonical = canonical_news_source("투자", source, "FULL_ARTICLE")
+        client = SimpleNamespace(responses=SimpleNamespace(stream=lambda **kw: FakeStream(bundle)))
+        return [
+            event
+            async for event in stream_news_bundle(
+                client,
+                model="gpt-5-nano",
+                source_hash=hashlib.sha256(canonical.encode()).hexdigest(),
+                title="투자",
+                paragraphs=source,
+                content_availability="FULL_ARTICLE",
+                translation_version="news-bilingual-v1",
+                request_timeout=30,
+            )
+        ]
+
+    result = asyncio.run(run())[-1]["result"]
+    assert result["translatedParagraphs"] == [
+        "The company announced investment. It will build a factory.",
+        "Operations begin next year.",
+    ]
 
 
 @pytest.mark.parametrize(
