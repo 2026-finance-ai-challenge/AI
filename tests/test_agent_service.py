@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -7,7 +8,12 @@ import httpx
 import pytest
 from openai import APITimeoutError
 
-from k_market_ai.agent.service import AgentEvidence, AgentHistoryMessage, MarketAgentService
+from k_market_ai.agent.service import (
+    AgentEvidence,
+    AgentHistoryMessage,
+    MarketAgentService,
+    _generation_schema,
+)
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
 
@@ -208,3 +214,18 @@ def test_generation_schema_does_not_weaken_final_validation(field, value):
         asyncio.run(service.answer("GENERAL", "Market", "Kakao earnings", (), (), "a" * 64, "en"))
     assert caught.value.code == "AI_INVALID_OUTPUT"
     request.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "text,accepted",
+    [
+        ("Kakao’s revenue was ₩4.04 trillion.\nNet income was positive.", True),
+        ("Kakao's net income (당기순이익) rose.", False),
+        ("Kakao profit 純利益 rose.", False),
+        ("Kakao カカオ earnings.", False),
+        ("Kakao ᄏ earnings.", False),
+    ],
+)
+def test_generation_grammar_rejects_mixed_scripts_without_rejecting_english_symbols(text, accepted):
+    pattern = _generation_schema("en")["properties"]["answer"]["pattern"]
+    assert bool(re.search(pattern, text)) == accepted

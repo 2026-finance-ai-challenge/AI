@@ -105,7 +105,7 @@ printf '%s\n' \
   'KMARKET_AI_NEWS_NARRATIVE_PROMPT_VERSION=news-narrative-v12' \
   'KMARKET_AI_FILING_SUMMARY_PROMPT_VERSION=filing-summary-v3' \
   'KMARKET_AI_PEER_PROMPT_VERSION=global-peer-narrative-v2' \
-  'KMARKET_AI_AGENT_PROMPT_VERSION=market-agent-v7' \
+  'KMARKET_AI_AGENT_PROMPT_VERSION=market-agent-v8' \
   >>"$runtime_env_temporary"
 chmod 600 "$runtime_env_temporary"
 mv "$runtime_env_temporary" "$RUNTIME_ENV"

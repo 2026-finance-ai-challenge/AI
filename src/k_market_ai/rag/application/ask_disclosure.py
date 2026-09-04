@@ -1,5 +1,6 @@
 import json
 import re
+from calendar import monthrange
 from collections import Counter
 from collections.abc import Sequence
 from datetime import date
@@ -99,7 +100,7 @@ class AskDisclosureHandler:
                     contents = [c.content for c in financial_chunks]
                     section_ids = [sid for c in financial_chunks for sid in c.section_ids]
                     method = "CURRENT_HYBRID_FINANCIAL"
-                tables = _financial_tables(sections)
+                tables = _financial_tables(sections, latest_only=bool(latest_overview))
                 if tables:
                     contents = [content for _, content in tables]
                     section_ids = [section_id for section_id, _ in tables]
@@ -233,7 +234,9 @@ def _financial_score(content: str) -> int:
     return score
 
 
-def _financial_tables(sections: Sequence[SourceSection]) -> list[tuple[UUID, str]]:
+def _financial_tables(
+    sections: Sequence[SourceSection], *, latest_only: bool = False
+) -> list[tuple[UUID, str]]:
     candidates = []
     for index, section in enumerate(sections):
         if not section.table_rows:
@@ -247,7 +250,7 @@ def _financial_tables(sections: Sequence[SourceSection]) -> list[tuple[UUID, str
         if score < 50:
             continue
         # 압축 원문의 행·셀 순서를 보존하고 기간·단위를 표와 함께 전달한다.
-        columns = _financial_columns(section.table_rows)
+        columns = _financial_columns(section.table_rows, latest_only=latest_only, context=context)
         if columns and len(context) + len(columns) + 100 <= 6500:
             content = (
                 context + "\nColumns with explicit reporting period (original values):\n" + columns
@@ -261,7 +264,9 @@ def _financial_tables(sections: Sequence[SourceSection]) -> list[tuple[UUID, str
     return [(section_id, content) for _, section_id, content in candidates[:1]]
 
 
-def _financial_columns(rows: tuple[tuple[str, ...], ...]) -> str | None:
+def _financial_columns(
+    rows: tuple[tuple[str, ...], ...], *, latest_only: bool = False, context: str = ""
+) -> str | None:
     # 반복되는 3개월·누적 헤더가 명확한 표만 전치해 전년 수치와 당기 수치의 혼동을 줄인다.
     if len(rows) < 3 or not rows[0] or rows[0][0].strip():
         return None
@@ -274,6 +279,13 @@ def _financial_columns(rows: tuple[tuple[str, ...], ...]) -> str | None:
     width = len(expected) + 1
     if any(len(row) != width for row in rows[2:]):
         return None
+    selected_periods = set(range(len(periods)))
+    if latest_only:
+        terms = [re.fullmatch(r"(?:제\s*)?(\d+)\s*(기|반기|분기|년).*", p.strip()) for p in periods]
+        if all(terms) and len({term.group(2) for term in terms if term is not None}) == 1:
+            numbers = [int(term.group(1)) for term in terms if term is not None]
+            # 최신 개요에는 기수가 명확한 최신 열만 제공하고 비교 질문에는 모든 열을 유지한다.
+            selected_periods = {i for i, number in enumerate(numbers) if number == max(numbers)}
     labels: list[str] = []
     occurrences = Counter(row[0].strip() for row in rows[2:])
     parents: list[tuple[int, str]] = []
@@ -291,15 +303,42 @@ def _financial_columns(rows: tuple[tuple[str, ...], ...]) -> str | None:
         parents.append((indent, label.strip()))
     columns = []
     for index, interval in enumerate(expected):
+        if index // 2 not in selected_periods:
+            continue
         values = [(label, row[index + 1]) for label, row in zip(labels, rows[2:], strict=True)]
+        dates = _financial_period_dates(context, periods[index // 2], interval)
         columns.append(
             json.dumps(
-                {"period": periods[index // 2], "interval": interval, "rows": values},
+                {"period": periods[index // 2], "interval": interval, **dates, "rows": values},
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
         )
     return "\n".join(columns)
+
+
+def _financial_period_dates(context: str, period: str, interval: str) -> dict[str, str]:
+    match = re.search(
+        re.escape(period.strip())
+        + r"\s+(\d{4})[.-](\d{2})[.-](\d{2})\s*부터\s*(\d{4})[.-](\d{2})[.-](\d{2})\s*까지",
+        context,
+    )
+    if match is None:
+        return {}
+    try:
+        start = date(*map(int, match.groups()[:3]))
+        end = date(*map(int, match.groups()[3:]))
+    except ValueError:
+        return {}
+    if start > end:
+        return {}
+    if interval == "3개월":
+        if end.day != monthrange(end.year, end.month)[1]:
+            return {}
+        # 반기·누적 시작일을 3개월 열에 복사하지 않고 명시된 종료월의 마지막 3개월을 구분한다.
+        year, month = divmod(end.year * 12 + end.month - 3, 12)
+        start = max(start, date(year, month + 1, 1))
+    return {"start_date": start.isoformat(), "end_date": end.isoformat()}
 
 
 def _citation(citation_id: str, hit: SearchHit) -> Citation:
