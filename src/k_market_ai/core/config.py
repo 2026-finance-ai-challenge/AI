@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     news_prompt_version: str = "news-intelligence-v2"
     term_prompt_version: str = "financial-term-v1"
     translation_model: str = "gpt-5-nano"
-    title_translation_prompt_version: str = "financial-title-translation-v11"
     news_narrative_prompt_version: str = "news-narrative-v12"
     translation_max_concurrency: int = Field(default=8, ge=1, le=16)
     disclosure_section_prompt_version: str = "disclosure-section-translation-v7"
@@ -52,6 +51,11 @@ class Settings(BaseSettings):
             "KMARKET_AI_HANA_EXPECTED_COMMIT",
         ),
     )
+
+    @property
+    def title_translation_prompt_version(self) -> str:
+        # 프롬프트 식별자는 실행 코드와 함께 변경하며 외부 배포 설정으로 덮어쓰지 않는다.
+        return "financial-title-translation-v12"
 
     @property
     def docs_enabled(self) -> bool:
