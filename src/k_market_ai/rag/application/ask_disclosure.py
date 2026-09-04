@@ -273,9 +273,19 @@ def _financial_columns(rows: tuple[tuple[str, ...], ...]) -> str | None:
     width = len(expected) + 1
     if any(len(row) != width for row in rows[2:]):
         return None
+    labels: list[str] = []
+    parents: list[tuple[int, str]] = []
+    for row in rows[2:]:
+        label = row[0]
+        indent = len(label) - len(label.lstrip())
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        # 원문의 들여쓰기로 구분된 지배기업·비지배지분 하위 항목은 상위 이름을 함께 준다.
+        labels.append(f"{parents[-1][1]} > {label.strip()}" if parents else label)
+        parents.append((indent, label.strip()))
     columns = []
     for index, interval in enumerate(expected):
-        values = [(row[0], row[index + 1]) for row in rows[2:]]
+        values = [(label, row[index + 1]) for label, row in zip(labels, rows[2:], strict=True)]
         columns.append(
             json.dumps(
                 {"period": periods[index // 2], "interval": interval, "rows": values},

@@ -175,8 +175,10 @@ def test_financial_columns_keep_current_prior_and_duplicate_metric_rows_separate
     assert columns[3]["rows"][0] == ["당기순이익(손실)", "372,149"]
     assert columns[1]["rows"][1][1] == "188,028"
     assert columns[1]["rows"][3][1] == "477,302"
+    assert columns[1]["rows"][1][0] == "당기순이익(손실) > 지배기업 소유주지분"
+    assert columns[1]["rows"][3][0] == "당기총포괄손익 > 지배기업 소유주지분"
     for i, column in enumerate(columns):
-        assert column["rows"] == [[row[0], row[i + 1]] for row in rows[2:]]
+        assert [row[1] for row in column["rows"]] == [row[i + 1] for row in rows[2:]]
 
 
 @pytest.mark.parametrize(
