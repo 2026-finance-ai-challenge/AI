@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from types import SimpleNamespace
 
 import httpx
@@ -11,6 +12,7 @@ from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
+    TITLE_ASCII_PATTERN,
     TranslationService,
     _canonicalize_non_krw_quantities,
     _currency_conversions,
@@ -67,9 +69,17 @@ def test_title_schema_limits_shape_without_coupling_semantic_token_order() -> No
         }
     )
     variants = schema["properties"]["items"]["items"]["anyOf"]
-    assert "pattern" not in variants[0]["properties"]["translated_text"]
+    assert variants[0]["properties"]["translated_text"]["pattern"] == TITLE_ASCII_PATTERN
+    assert re.fullmatch(TITLE_ASCII_PATTERN, "Doosan Enerbility at __KRW_AMOUNT_0__")
+    assert not re.fullmatch(TITLE_ASCII_PATTERN, "Doosan Enerbility __KRW_AMOUNT_0__빌리티")
+    assert not re.fullmatch(TITLE_ASCII_PATTERN, "Alteogen's 몸값")
     assert variants[0]["properties"]["id"]["enum"] == ["title-0"]
     assert variants[1]["properties"]["id"]["enum"] == ["title-1"]
+
+
+def test_deployment_environment_cannot_mislabel_title_prompt(monkeypatch) -> None:
+    monkeypatch.setenv("KMARKET_AI_TITLE_TRANSLATION_PROMPT_VERSION", "obsolete-prompt")
+    assert Settings().title_translation_prompt_version == "financial-title-translation-v12"
 
 
 @pytest.mark.parametrize("amount", ["2000억弗", "61억 弗"])
@@ -128,6 +138,16 @@ def test_title_claim_roles_do_not_guess_ambiguous_cases(source):
             True,
         ),
         (
+            "한화오션, 러시아 아틱 LNG 2로부터 1조3700억 손배 청구",
+            "Hanwha Ocean faces damages claim of __KRW_AMOUNT_0__ from Russia's Arctic LNG 2",
+            True,
+        ),
+        (
+            "한화오션, 러시아 아틱 LNG 2로부터 1조3700억 손배 청구",
+            "Hanwha Ocean FACES a damages claim for __KRW_AMOUNT_0__ from Russia's Arctic LNG 2",
+            True,
+        ),
+        (
             "Alpha, Beta 상대 20억원 손배 청구",
             "Alpha faces __KRW_AMOUNT_0__ damages claim from Beta",
             False,
@@ -148,7 +168,7 @@ def test_title_claim_direction_schema_and_server_reject_reversal(
         "translated_text"
     ]
     # 생성 문법과 의미 검증을 분리해도 반대 방향의 문장은 저장 전에 거절한다.
-    assert "pattern" not in text_schema
+    assert re.fullmatch(text_schema["pattern"], translated)
     responses = FakeResponses(
         SimpleNamespace(
             items=(

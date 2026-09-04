@@ -22,7 +22,10 @@ from k_market_ai.translations.domain import (
 
 logger = logging.getLogger(__name__)
 
-TITLE_INSTRUCTIONS = """Translate Korean financial titles into natural English. The translated
+TITLE_INSTRUCTIONS = """Translate Korean financial titles into natural English using ONLY
+printable ASCII characters: straight quotes, three dots for ellipses, and hyphens for dashes.
+Write up/down instead of arrows. Transliterate accented names into ASCII if necessary.
+The translated
 text must contain English only and must not contain Korean, Chinese or Japanese characters;
 translate financial headline shorthand such as 美 (U.S.), 中 (China), 日 (Japan), and 株 (stocks)
 according to its context. A broker name ending in 證 or 증 abbreviates 증권, meaning Securities:
@@ -41,6 +44,9 @@ and retain the ellipsis; do not copy Korean or invent the rest of the tag.
 Interpret idioms in context instead of mistaking ordinary Korean nouns for people's names:
 '노를 젓다/노 저었다' in a shipbuilder headline means rowing or making use of momentum,
 not a person named Noh and not a negative claim. Preserve the source's affirmative/negative tone.
+A share-price nickname combines a price and company name: '8만빌리티' means Enerbility at
+KRW 80,000. Translate the price level in context, not a literal 'billity' suffix appended to
+a protected amount. Samjeonnix is an intentional protected nickname and must stay unchanged.
 Copy every protected currency token such as __KRW_AMOUNT_0__ and protected name token such as
 __TERM_SAMJEONNIX__ exactly once without interpreting, altering, or removing it; the server
 replaces these tokens after generation. Never emit Korean or romanized units such as eok, jo, or
@@ -130,6 +136,7 @@ NEWS_BATCH_MAX_ITEMS = 24
 NEWS_BATCH_CONCURRENCY = 4
 MODEL_MAX_OUTPUT_TOKENS = 128_000
 TITLE_MAX_OUTPUT_TOKENS = 16_384
+TITLE_ASCII_PATTERN = r"^[\x20-\x7e]+$"
 NEWS_SEGMENT_MAX_OUTPUT_TOKENS = MODEL_MAX_OUTPUT_TOKENS
 NEWS_SUMMARY_MAX_OUTPUT_TOKENS = MODEL_MAX_OUTPUT_TOKENS
 DISCLOSURE_SECTION_MAX_OUTPUT_TOKENS = 16_384
@@ -1030,6 +1037,7 @@ def _title_output_schema(sources: dict[str, TitleSource]) -> dict[str, Any]:
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 1000,
+                        "pattern": TITLE_ASCII_PATTERN,
                     },
                 },
                 "required": ["id", "translated_text"],
@@ -1069,9 +1077,15 @@ def _verify_title_claim_direction(source: str, translated: str) -> None:
     if roles is None:
         return
     incoming = roles["topic_role"] == "claim_recipient"
-    pattern = r"\bfaces\b.*\bdamages claim from\b" if incoming else r"\bseeks\b.*\bdamages from\b"
+    # 청구액이 claim과 from 사이에 있어도 당사자 방향은 동일하다.
+    amount = r"(?:\s+(?:of|for|worth)\s+__KRW_AMOUNT_[0-9]+__)?"
+    pattern = (
+        rf"\bfaces\b.*\bdamages claim{amount}\s+from\b"
+        if incoming
+        else rf"\bseeks\b.*\bdamages{amount}\s+from\b"
+    )
     opposite = r"\bseeks\b|\bfiles\b" if incoming else r"\bfaces\b|\bsued by\b"
-    if not re.search(pattern, translated) or re.search(opposite, translated, re.I):
+    if not re.search(pattern, translated, re.I) or re.search(opposite, translated, re.I):
         raise _invalid_output("title_claim_direction_mismatch")
 
 
