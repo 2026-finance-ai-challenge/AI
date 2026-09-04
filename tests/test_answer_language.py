@@ -17,6 +17,19 @@ from k_market_ai.rag.domain.models import SearchHit
 from k_market_ai.rag.infrastructure.openai_answer import OpenAIAnswerAdapter
 
 
+def agent_response(fields):
+    return SimpleNamespace(
+        status="completed",
+        output=[],
+        output_text=json.dumps(fields),
+        id="response-test",
+        model="gpt-5-nano",
+        usage=None,
+        incomplete_details=None,
+        max_output_tokens=16000,
+    )
+
+
 @pytest.mark.parametrize("locale", ["en", "ko"])
 def test_legacy_explicit_language_keeps_strict_validation_without_an_extra_call(locale):
     fields = dict(
@@ -30,9 +43,9 @@ def test_legacy_explicit_language_keeps_strict_validation_without_an_extra_call(
         insufficient_evidence=False,
         confidence=0.9,
     )
-    parse = AsyncMock(return_value=SimpleNamespace(output_parsed=SimpleNamespace(**fields)))
+    parse = AsyncMock(return_value=agent_response(fields))
     service = MarketAgentService(
-        SimpleNamespace(responses=SimpleNamespace(parse=parse)), Settings()
+        SimpleNamespace(responses=SimpleNamespace(create=parse)), Settings()
     )
     result = asyncio.run(
         service.answer(
@@ -58,20 +71,27 @@ def test_legacy_explicit_language_keeps_strict_validation_without_an_extra_call(
     assert json.loads(payload)["answer_locale"] == locale
     assert args["model"] == "gpt-5-nano"
     assert args["store"] is False
-    schema = args["text_format"].model_json_schema()
-    assert "pattern" in schema["properties"]["answer"]
+    schema = args["text"]["format"]["schema"]
+    assert "pattern" not in schema["properties"]["answer"]
+    assert args["text"]["format"]["strict"] is True
 
 
 @pytest.mark.parametrize(
     "locale,text", [("en", "배당은 미확정입니다."), ("ko", "Dividend is unconfirmed.")]
 )
 def test_agent_does_not_save_wrong_language_or_retry(locale, text):
-    parsed = SimpleNamespace(
-        answer=text, refusal_reason=None, suggested_room_name=text, disclaimer=text
+    parsed = dict(
+        answer=text,
+        refusal_reason=None,
+        suggested_room_name=text,
+        disclaimer=text,
+        evidence_ids=[],
+        insufficient_evidence=False,
+        confidence=0.5,
     )
-    parse = AsyncMock(return_value=SimpleNamespace(output_parsed=parsed))
+    parse = AsyncMock(return_value=agent_response(parsed))
     service = MarketAgentService(
-        SimpleNamespace(responses=SimpleNamespace(parse=parse)), Settings()
+        SimpleNamespace(responses=SimpleNamespace(create=parse)), Settings()
     )
     with pytest.raises(AppError) as caught:
         asyncio.run(service.answer("NEWS", "News", "Explain", (), (), "a" * 64, locale))
@@ -87,7 +107,7 @@ def test_agent_validation_diagnostics_do_not_log_question_or_output(caplog):
     except ValidationError as error:
         parse = AsyncMock(side_effect=error)
     service = MarketAgentService(
-        SimpleNamespace(responses=SimpleNamespace(parse=parse)), Settings()
+        SimpleNamespace(responses=SimpleNamespace(create=parse)), Settings()
     )
     with pytest.raises(AppError):
         asyncio.run(service.answer("NEWS", "PRIVATE_TITLE", "PRIVATE_QUESTION", (), (), "a" * 64))
@@ -187,9 +207,9 @@ def test_question_language_schema_preserves_strict_language_checks_in_one_agent_
     )
     schema = _EnglishAgentAnswer if locale == "en" else _KoreanAgentAnswer
     parsed = schema.model_validate(result)
-    parse = AsyncMock(return_value=SimpleNamespace(output_parsed=parsed))
+    parse = AsyncMock(return_value=agent_response(parsed.model_dump()))
     service = MarketAgentService(
-        SimpleNamespace(responses=SimpleNamespace(parse=parse)), Settings()
+        SimpleNamespace(responses=SimpleNamespace(create=parse)), Settings()
     )
     answer = asyncio.run(
         service.answer(
@@ -209,7 +229,7 @@ def test_question_language_schema_preserves_strict_language_checks_in_one_agent_
     assert answer.answer == result["answer"]
     parse.assert_awaited_once()
     args = parse.call_args.kwargs
-    assert args["text_format"] is schema
+    assert args["text"]["format"]["strict"] is True
     assert "current question alone" in args["instructions"]
     payload = args["input"][-1]["content"].split("\n", 1)[1].split("\n\nCurrent question:\n")[0]
     assert json.loads(payload)["answer_locale"] == locale
