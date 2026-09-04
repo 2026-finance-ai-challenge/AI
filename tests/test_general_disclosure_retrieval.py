@@ -1,15 +1,17 @@
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from k_market_ai.core.config import Settings
 from k_market_ai.main import create_app
-from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
+from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler, _financial_columns
 from k_market_ai.rag.domain.models import FilingCandidate, SearchHit, SectionKind, SourceSection
 
 
@@ -147,5 +149,98 @@ def test_financial_evidence_preserves_header_and_period_cell_order():
     )
     assert result[0].retrieval_method == "CURRENT_STRUCTURED_FINANCIAL"
     assert "2026.01.01~06.30" in result[0].content
-    assert '["3개월", "누적", "3개월", "누적"]' in result[0].content
-    assert '["매출액", "100", "200", "90", "180"]' in result[0].content
+    assert '"period":"2026 반기","interval":"누적","rows":[["매출액","200"]]' in result[0].content
+    assert '"period":"2025 반기","interval":"누적","rows":[["매출액","180"]]' in result[0].content
+
+
+def test_financial_columns_keep_current_prior_and_duplicate_metric_rows_separate():
+    rows = (
+        ("　", "제 32 기 반기", "제 31 기 반기"),
+        ("3개월", "누적", "3개월", "누적"),
+        ("당기순이익(손실)", "17,980", "244,816", "171,815", "372,149"),
+        ("　지배기업 소유주지분", "16,332", "188,028", "161,247", "333,098"),
+        ("당기총포괄손익", "175,910", "533,367", "339,983", "657,005"),
+        ("　지배기업 소유주지분", "169,494", "477,302", "327,473", "606,926"),
+    )
+    serialized = _financial_columns(rows)
+    assert serialized is not None
+    columns = [json.loads(line) for line in serialized.splitlines()]
+    assert [(c["period"], c["interval"]) for c in columns] == [
+        ("제 32 기 반기", "3개월"),
+        ("제 32 기 반기", "누적"),
+        ("제 31 기 반기", "3개월"),
+        ("제 31 기 반기", "누적"),
+    ]
+    assert columns[1]["rows"][0] == ["당기순이익(손실)", "244,816"]
+    assert columns[3]["rows"][0] == ["당기순이익(손실)", "372,149"]
+    assert columns[1]["rows"][1][1] == "188,028"
+    assert columns[1]["rows"][3][1] == "477,302"
+    for i, column in enumerate(columns):
+        assert column["rows"] == [[row[0], row[i + 1]] for row in rows[2:]]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        (),
+        ((), (), ()),
+        (("", "당기", "전기"), ("누적", "3개월", "누적", "3개월"), ("매출", "1", "2", "3", "4")),
+        (("", "당기", "전기"), ("3개월", "누적", "3개월", "누적"), ("매출", "1", "2")),
+        (
+            ("항목", "당기", "전기"),
+            ("3개월", "누적", "3개월", "누적"),
+            ("매출", "1", "2", "3", "4"),
+        ),
+    ],
+)
+def test_ambiguous_financial_headers_are_not_guessed(rows):
+    assert _financial_columns(rows) is None
+
+
+def test_duplicate_current_evidence_keeps_latest_filing_but_not_other_company():
+    repo = repository(True)
+    latest = repo.evidence_candidates.return_value[0]
+    repo.evidence_candidates.return_value = [
+        latest,
+        replace(latest, receipt_number="20260813000001", filed_date=date(2026, 8, 13)),
+        replace(latest, receipt_number="20260812000001", stock_code="035720"),
+    ]
+    embedding = SimpleNamespace(model="test", embed=AsyncMock(return_value=[(1.0,)]))
+    result = asyncio.run(
+        AskDisclosureHandler(repo, embedding, SimpleNamespace()).retrieve(
+            ["005930", "035720"], "compare earnings", None, None, True
+        )
+    )
+    assert [item.filing.receipt_number for item in result] == ["20260814003699", "20260812000001"]
+
+
+@pytest.mark.parametrize(
+    "question,from_date,expected",
+    [
+        ("Please tell me about recent Kakao's earning", None, 1),
+        ("카카오 최근 실적 알려줘", None, 1),
+        ("compare recent Kakao earnings", None, 2),
+        ("최근 실적 추이", None, 2),
+        ("recent Kakao earnings", date(2026, 1, 1), 2),
+    ],
+)
+def test_latest_overview_does_not_mix_older_preliminary_figures(question, from_date, expected):
+    repo = repository(True)
+    latest = repo.evidence_candidates.return_value[0]
+    repo.evidence_candidates.return_value = [
+        latest,
+        replace(latest, receipt_number="20260813000001"),
+    ]
+    section = repo.load_current_sections.return_value[0]
+    repo.load_current_sections.side_effect = [
+        [section],
+        [replace(section, text=section.text + " 별도 잠정")],
+    ]
+    embedding = SimpleNamespace(model="test", embed=AsyncMock(return_value=[(1.0,)]))
+    result = asyncio.run(
+        AskDisclosureHandler(repo, embedding, SimpleNamespace()).retrieve(
+            ["005930"], question, from_date, None, True
+        )
+    )
+    assert len(result) == expected
+    assert result[0].filing.receipt_number == latest.receipt_number
