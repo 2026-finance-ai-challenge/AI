@@ -38,6 +38,7 @@ Each segment contains currency_conversions:
 use the supplied exact English KRW amounts instead of recalculating or romanizing Korean units.
 Preserve every individual amount, including quarterly amounts and their totals in the same sentence.
 Translate or transliterate all CJK names and labels. Do not copy Korean quotations into English.
+Use printable ASCII characters in translated_text, including straight quotation marks.
 Before returning, verify every segment ID and every listed monetary amount
 appears in its translation."""
 
@@ -58,6 +59,7 @@ fields; audit for remaining CJK characters. Do not use romanized units eok, jo o
 Korean company suffixes (주), ㈜ and 주식회사 mean Inc. or Co., Ltd.; never copy those
 suffixes in English fields. Keep Chinese-character abbreviations out of English as well.
 Translate labels and quotations too; English fields must not quote Korean original wording.
+Use printable ASCII characters in translated_text, including straight quotation marks.
 Keep summaries first and items second in the requested JSON schema."""
 
 
@@ -193,10 +195,14 @@ async def stream_news_bundle(
         "type": "string",
         "enum": [f"segment-{i}" for i in range(len(segments))],
     }
-    # 생성 도중의 긴 문자열 정규식 제약과 최종 언어·금액 검증을 분리한다.
+    # 본문은 단순 문자 범위만 생성 단계에서 제한하고 금액·완전성은 최종 검증한다.
     body_schema = schema["$defs"]["_StructuredNewsSegmentItem"]["properties"]["translated_text"]
-    body_schema.pop("pattern", None)
+    body_schema["pattern"] = r"^[\x20-\x7E\n\r\t]*$"
     body_schema.pop("maxLength", None)
+    body_schema["description"] = (
+        "Complete sentence translation, not a summary. Preserve every clause, date, individual "
+        "monetary amount and total. The summaries' word limits do not apply here."
+    )
     try:
         async with client.responses.stream(
             model=model,
@@ -204,7 +210,7 @@ async def stream_news_bundle(
             input=json.dumps(payload, ensure_ascii=False),
             reasoning={"effort": "low"},
             text={
-                "verbosity": "medium",
+                "verbosity": "high",
                 "format": {
                     "type": "json_schema",
                     "name": "news_bundle",
