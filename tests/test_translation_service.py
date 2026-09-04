@@ -82,6 +82,11 @@ def test_deployment_environment_cannot_mislabel_title_prompt(monkeypatch) -> Non
     assert Settings().title_translation_prompt_version == "financial-title-translation-v13"
 
 
+def test_news_prompt_version_is_owned_by_code(monkeypatch):
+    monkeypatch.setenv("KMARKET_AI_NEWS_NARRATIVE_PROMPT_VERSION", "news-narrative-v12")
+    assert Settings().news_narrative_prompt_version == "news-narrative-v13"
+
+
 def test_price_nickname_is_expanded_before_currency_protection() -> None:
     item = _title("one", "두산에너빌리티, 장중 '8만빌리티' 회복…다음장 흐름 주목")
     request = _title_request_item(item, "title-0")
