@@ -100,6 +100,7 @@ def test_one_request_streams_both_summaries_before_complete_body():
     assert calls[0]["store"] is False
     assert calls[0]["text"]["format"]["strict"] is True
     assert "text_format" not in calls[0]
+    assert "max_output_tokens" not in calls[0]
 
 
 @pytest.mark.parametrize(
@@ -132,6 +133,50 @@ def test_incomplete_summary_is_never_published():
     value = '{"summaries":' + json.dumps(SUMMARY)
     assert completed_summary(value[:-1]) is None
     assert completed_summary(value) is not None
+
+
+def test_provider_interruption_keeps_summary_without_storing_a_partial_body():
+    calls = []
+
+    class InterruptedStream(FakeStream):
+        async def __aiter__(self):
+            yield SimpleNamespace(
+                type="response.output_text.delta",
+                delta='{"summaries":' + json.dumps(SUMMARY) + ',"items":[',
+            )
+            yield SimpleNamespace(
+                type="response.incomplete",
+                response=SimpleNamespace(
+                    incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                ),
+            )
+
+    def stream(**kwargs):
+        calls.append(kwargs)
+        return InterruptedStream(None)
+
+    source = ["투자를 발표했다."]
+    canonical = canonical_news_source("투자", source, "FULL_ARTICLE")
+
+    async def run():
+        events = stream_news_bundle(
+            SimpleNamespace(responses=SimpleNamespace(stream=stream)),
+            model="gpt-5-nano",
+            source_hash=hashlib.sha256(canonical.encode()).hexdigest(),
+            title="투자",
+            paragraphs=source,
+            content_availability="FULL_ARTICLE",
+            translation_version="news-bilingual-v1",
+            request_timeout=30,
+        )
+        assert (await anext(events))["type"] == "progress"
+        with pytest.raises(AppError) as error:
+            await anext(events)
+        assert error.value.code == "AI_GENERATION_INCOMPLETE"
+
+    asyncio.run(run())
+    assert len(calls) == 1
+    assert "max_output_tokens" not in calls[0]
 
 
 def test_missing_currency_is_not_appended_as_an_unrelated_fallback():
@@ -193,6 +238,48 @@ def test_body_retry_reuses_verified_bilingual_summary_without_regeneration():
     assert events[0]["result"]["bodyReady"] is True
     assert "summaries" not in calls[0]["text"]["format"]["schema"]["properties"]
     assert calls[0]["text"]["format"]["schema"]["properties"]["items"]["minItems"] == 1
+
+
+@pytest.mark.parametrize(
+    "translated",
+    [
+        "At least KRW 10 million; KRW 700, KRW 7,000, or KRW 70,000 will be paid.",
+        "At least 10 million won; 700 won, 7,000 won, or 70,000 won will be paid.",
+        "At least 10 million KRW; 700 KRW, 7,000 KRW, or 70,000 KRW will be paid.",
+    ],
+)
+def test_currency_lists_preserve_each_amount_without_moving_the_next_currency(translated):
+    from k_market_ai.translations.service import _normalize_english_output
+
+    source = "자산을 1000만원 이상 늘리면 700원, 7000원, 7만원 중 지급한다."
+    normalized = _normalize_english_output(_restore_currency_amounts(source, translated))
+    assert normalized == (
+        "At least KRW 10 million; KRW 700, KRW 7,000, or KRW 70,000 will be paid."
+    )
+    assert _normalize_english_output(normalized) == normalized
+
+
+@pytest.mark.parametrize(
+    "translated",
+    [
+        "KRW 10 million; KRW 700, KRW 70,000.",
+        "KRW 10 million; KRW 700, KRW 7,001, KRW 70,000.",
+        "KRW 10 million; KRW 700, USD 7,000, KRW 70,000.",
+        "KRW 10 million; KRW 700, KRW 7,000,000, KRW 70,000.",
+    ],
+)
+def test_currency_list_fix_does_not_accept_missing_changed_or_different_currency(translated):
+    with pytest.raises(AppError):
+        _restore_currency_amounts("1000만원, 700원, 7000원, 7만원", translated)
+
+
+def test_decimal_currency_lists_keep_punctuation_and_exact_values():
+    from k_market_ai.translations.service import _normalize_english_output
+
+    translated = "KRW 2.6135 trillion, KRW 3.2 billion. KRW 25.50, KRW 700."
+    assert _normalize_english_output(translated) == (
+        "KRW 2.6135 trillion, KRW 3.2 billion. KRW 25.5, KRW 700."
+    )
 
 
 def test_valid_direct_currency_output_is_not_duplicated():
@@ -291,7 +378,7 @@ def test_legal_articles_are_not_krw_amounts():
     assert _protect_currency_amounts(source) == (source, ())
 
 
-@pytest.mark.parametrize("unit", ["t", "톤", "GWh", "㎡", "평", "주"])
+@pytest.mark.parametrize("unit", ["t", "톤", "GWh", "㎡", "평", "주", "가구", "세대", "곳"])
 def test_non_currency_units_never_receive_krw(unit):
     from k_market_ai.translations.service import (
         _canonicalize_non_krw_quantities,
@@ -311,6 +398,19 @@ def test_currency_token_one_does_not_consume_token_ten():
     restored = _restore_currency_amounts(source, protected)
     assert "AMOUNT" not in restored
     assert "KRW 1.1 billion" in restored
+
+
+def test_ranked_names_and_household_counts_are_not_monetary_requirements():
+    from k_market_ai.translations.service import _protect_currency_amounts
+
+    source = "1 조국혁신당 조국, 3 조건. 소득 하위 20% 중 310만 가구."
+    assert _protect_currency_amounts(source) == (source, ())
+    translated = "1 Cho Kuk, 3 conditions. Among the bottom 20%, 3.1 million households."
+    assert _restore_currency_amounts(source, translated) == translated
+    assert _protect_currency_amounts("투자 1조와 매출 2조는 증가했다.")[1] == (
+        ("__KRW_AMOUNT_0__", "KRW 1 trillion"),
+        ("__KRW_AMOUNT_1__", "KRW 2 trillion"),
+    )
 
 
 def test_stream_preserves_korean_amount_and_does_not_cut_english_currency_unit():
