@@ -975,8 +975,12 @@ def _canonicalize_non_krw_quantities(source_text: str) -> str:
 
 
 def _title_request_item(item: TitleSource, identifier: str) -> dict[str, object]:
+    source_text = item.source_text.replace("弗", "달러")
+    if "두산에너빌리티" in source_text:
+        # 금액 보호 토큰 뒤에 별칭 조각이 남지 않도록 원문의 주가 수준을 풀어 쓴다.
+        source_text = re.sub(r"(\d[\d,]*(?:\.\d+)?\s*만)빌리티", r"\1원 주가 수준", source_text)
     protected_source, protected_amounts = _protect_currency_amounts(
-        _canonicalize_non_krw_quantities(item.source_text.replace("弗", "달러"))
+        _canonicalize_non_krw_quantities(source_text)
     )
     protected_source = protected_source.replace("삼전닉스", "__TERM_SAMJEONNIX__")
     request: dict[str, object] = {
@@ -1062,6 +1066,12 @@ def _title_output_schema(sources: dict[str, TitleSource]) -> dict[str, Any]:
 def _verify_title_tokens(source: TitleSource, translated: str) -> None:
     expected = _title_tokens(source)
     actual = _TITLE_TOKEN_PATTERN.findall(translated)
+    if (
+        "두산에너빌리티" in source.source_text
+        and re.search(r"\d[\d,]*(?:\.\d+)?\s*만빌리티", source.source_text)
+        and re.search(r"__KRW_AMOUNT_[0-9]+__\s*bil", translated, re.I)
+    ):
+        raise _invalid_output("title_price_nickname_fragment")
     if actual == expected:
         return
     if any(token not in actual for token in expected if token.startswith("__KRW")):
