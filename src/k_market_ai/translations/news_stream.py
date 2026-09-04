@@ -184,10 +184,12 @@ async def stream_news_bundle(
         "target_locale": "en",
         "translation_version": translation_version,
         "model": model,
-        "prompt_version": "news-bilingual-stream-v5",
+        "prompt_version": "news-bilingual-stream-v6",
     }
     text = ""
     published = False
+    response = None
+    validating_segment: str | None = None
     cached_summary = BilingualSummary.model_validate(cached_summaries) if cached_summaries else None
     schema = (NewsBody if cached_summary else NewsBundle).model_json_schema()
     schema["properties"]["items"].update(minItems=len(segments), maxItems=len(segments))
@@ -218,7 +220,6 @@ async def stream_news_bundle(
                     "schema": schema,
                 },
             },
-            max_output_tokens=min(128_000, max(8_000, sum(map(len, sources)) * 5)),
             store=False,
             timeout=request_timeout,
         ) as stream:
@@ -267,6 +268,7 @@ async def stream_news_bundle(
             result = summary_result(restore_summary(bundle.summaries))
         translated: dict[int, str] = {}
         for item in parsed.items:
+            validating_segment = item.id
             index = int(item.id.removeprefix("segment-"))
             if index in translated or index >= len(sources):
                 raise _invalid_output()
@@ -292,6 +294,15 @@ async def stream_news_bundle(
             }
         )
         yield {"type": "complete", **metadata, "result": result}
+    except AppError as exception:
+        logger.warning(
+            "News bundle rejected code=%s source_hash=%s segment=%s response_id=%s",
+            exception.code,
+            source_hash,
+            validating_segment,
+            getattr(response, "id", None),
+        )
+        raise
     except (ValidationError, ValueError, IndexError) as exception:
         logger.warning(
             "News bundle validation failed type=%s fields=%s",
