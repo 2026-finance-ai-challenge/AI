@@ -1,6 +1,8 @@
+import json
 import re
 from collections.abc import Sequence
 from datetime import date
+from uuid import UUID
 
 from k_market_ai.core.answer_language import AnswerLocale, resolve_answer_language
 from k_market_ai.core.errors import AppError
@@ -13,6 +15,7 @@ from k_market_ai.rag.domain.models import (
     RagAnswer,
     SearchHit,
     SelectedContext,
+    SourceSection,
 )
 
 PROMPT_VERSION = "filing-grounded-v8"
@@ -79,6 +82,11 @@ class AskDisclosureHandler:
                     contents = [c.content for c in financial_chunks]
                     section_ids = [sid for c in financial_chunks for sid in c.section_ids]
                     method = "CURRENT_HYBRID_FINANCIAL"
+                tables = _financial_tables(sections)
+                if tables:
+                    contents = [content for _, content in tables]
+                    section_ids = [section_id for section_id, _ in tables]
+                    method = "CURRENT_STRUCTURED_FINANCIAL"
             # 복구 대기 문서도 현재 원문에서 검색하며 구버전 청크나 생성한 수치를 쓰지 않는다.
             if not contents:
                 sections = await self._repository.load_current_sections(filing.receipt_number)
@@ -199,6 +207,28 @@ def _financial_score(content: str) -> int:
         term in text for term in ("보수의 종류", "출자목적", "최초취득", "부문 부문 합계")
     )
     return score
+
+
+def _financial_tables(sections: Sequence[SourceSection]) -> list[tuple[UUID, str]]:
+    candidates = []
+    for index, section in enumerate(sections):
+        if not section.table_rows:
+            continue
+        context = "\n".join(
+            item.text[:700]
+            for item in sections[max(0, index - 2) : index]
+            if item.document_id == section.document_id
+        )
+        score = _financial_score(context + "\n" + section.text)
+        if score < 50:
+            continue
+        # 압축 원문의 행·셀 순서를 보존하고 기간·단위를 표와 함께 전달한다.
+        rows = "\n".join(json.dumps(row, ensure_ascii=False) for row in section.table_rows)
+        content = context + "\nTable rows (original cell order; multi-row headers):\n" + rows
+        if len(content) <= 6500:
+            candidates.append((score, section.id, content))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [(section_id, content) for _, section_id, content in candidates[:1]]
 
 
 def _citation(citation_id: str, hit: SearchHit) -> Citation:

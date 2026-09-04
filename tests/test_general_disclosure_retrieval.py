@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -114,3 +115,37 @@ def test_evidence_endpoint_requires_internal_auth_and_bounds_company_scope():
         result = client.post("/internal/v1/disclosures/evidence", headers=headers, json=payload)
         assert result.status_code == 200 and result.json() == []
     handler.retrieve.assert_awaited_once_with(["005930"], "recent earnings", None, None, True)
+
+
+def test_financial_evidence_preserves_header_and_period_cell_order():
+    repo = repository(True)
+    source = repo.load_current_sections.return_value[0]
+    repo.load_current_sections.return_value = [
+        replace(source, kind=SectionKind.TITLE, text="연결 손익계산서"),
+        replace(
+            source,
+            ordinal=2,
+            kind=SectionKind.TEXT,
+            text="2026.01.01~06.30 / 2025.01.01~06.30 (단위: 백만원)",
+        ),
+        replace(
+            source,
+            ordinal=3,
+            text="매출액 100 200 90 180 영업이익 20 40 18 36 순이익 15 30 12 24",
+            table_rows=(
+                ("", "2026 반기", "2025 반기"),
+                ("3개월", "누적", "3개월", "누적"),
+                ("매출액", "100", "200", "90", "180"),
+            ),
+        ),
+    ]
+    embedding = SimpleNamespace(model="test", embed=AsyncMock(return_value=[(1.0,)]))
+    result = asyncio.run(
+        AskDisclosureHandler(repo, embedding, SimpleNamespace()).retrieve(
+            ["005930"], "recent earnings", None, None, True
+        )
+    )
+    assert result[0].retrieval_method == "CURRENT_STRUCTURED_FINANCIAL"
+    assert "2026.01.01~06.30" in result[0].content
+    assert '["3개월", "누적", "3개월", "누적"]' in result[0].content
+    assert '["매출액", "100", "200", "90", "180"]' in result[0].content

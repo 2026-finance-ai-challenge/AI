@@ -27,7 +27,10 @@ def test_market_agent_uses_server_evidence_without_provider_storage() -> None:
             "STOCK",
             "Samsung Electronics",
             "What is the latest observed price?",
-            (AgentHistoryMessage("USER", "Tell me about this company."),),
+            (
+                AgentHistoryMessage("USER", "Tell me about this company."),
+                AgentHistoryMessage("ASSISTANT", "Earlier answer."),
+            ),
             (
                 AgentEvidence(
                     "E1",
@@ -48,7 +51,18 @@ def test_market_agent_uses_server_evidence_without_provider_storage() -> None:
     assert responses.arguments["store"] is False
     assert responses.arguments["safety_identifier"] == "a" * 64
     assert responses.arguments["timeout"] == 90.0
+    assert responses.arguments["reasoning"] == {"effort": "medium"}
+    assert responses.arguments["max_output_tokens"] == 16_000
     assert "KRW 78,000" in str(responses.arguments["input"])
+    instructions = str(responses.arguments["instructions"])
+    assert "Answer the current question" in instructions
+    assert "insufficient_evidence refers only to the current question" in instructions
+    assert "exact reporting-period column" in instructions
+    messages = responses.arguments["input"]
+    assert messages[0] == {"role": "user", "content": "Tell me about this company."}
+    assert messages[1] == {"role": "assistant", "content": "Earlier answer."}
+    assert messages[-1]["role"] == "user"
+    assert messages[-1]["content"].endswith("Current question:\nWhat is the latest observed price?")
 
 
 @pytest.mark.parametrize("deadline", [False, True])

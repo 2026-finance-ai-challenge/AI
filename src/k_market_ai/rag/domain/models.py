@@ -37,6 +37,7 @@ class SourceSection:
     kind: SectionKind
     heading: str | None
     text: str
+    table_rows: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

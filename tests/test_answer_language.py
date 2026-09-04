@@ -54,7 +54,8 @@ def test_legacy_explicit_language_keeps_strict_validation_without_an_extra_call(
     args = parse.call_args.kwargs
     assert f"({'en' if locale == 'en' else 'ko'})" in args["instructions"]
     assert "do not change the output language" in args["instructions"]
-    assert json.loads(args["input"])["answer_locale"] == locale
+    payload = args["input"][-1]["content"].split("\n", 1)[1].split("\n\nCurrent question:\n")[0]
+    assert json.loads(payload)["answer_locale"] == locale
     assert args["model"] == "gpt-5-nano"
     assert args["store"] is False
     schema = args["text_format"].model_json_schema()
@@ -210,8 +211,9 @@ def test_question_language_schema_preserves_strict_language_checks_in_one_agent_
     args = parse.call_args.kwargs
     assert args["text_format"] is schema
     assert "current question alone" in args["instructions"]
-    assert json.loads(args["input"])["answer_locale"] == locale
-    assert json.loads(args["input"])["question"] == question
+    payload = args["input"][-1]["content"].split("\n", 1)[1].split("\n\nCurrent question:\n")[0]
+    assert json.loads(payload)["answer_locale"] == locale
+    assert args["input"][-1]["content"].endswith("Current question:\n" + question)
     assert args["model"] == "gpt-5-nano"
     assert args["store"] is False
     with pytest.raises(ValidationError):
