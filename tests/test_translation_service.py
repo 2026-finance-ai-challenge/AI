@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import json
-import re
 from types import SimpleNamespace
 
 import httpx
@@ -19,6 +18,7 @@ from k_market_ai.translations.service import (
     _StructuredNewsSegmentItem,
     _title_event_roles,
     _title_output_schema,
+    _title_request_item,
     canonical_disclosure_section,
     canonical_news_source,
 )
@@ -59,7 +59,7 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert schema["properties"]["items"]["maxItems"] == 2
 
 
-def test_title_schema_requires_each_items_tokens_without_cjk() -> None:
+def test_title_schema_limits_shape_without_coupling_semantic_token_order() -> None:
     schema = _title_output_schema(
         {
             "title-0": _title("one", "삼전닉스 투자 1조원, 지원 20억원"),
@@ -67,15 +67,19 @@ def test_title_schema_requires_each_items_tokens_without_cjk() -> None:
         }
     )
     variants = schema["properties"]["items"]["items"]["anyOf"]
-    first = variants[0]["properties"]["translated_text"]["pattern"]
-    second = variants[1]["properties"]["translated_text"]["pattern"]
+    assert "pattern" not in variants[0]["properties"]["translated_text"]
     assert variants[0]["properties"]["id"]["enum"] == ["title-0"]
     assert variants[1]["properties"]["id"]["enum"] == ["title-1"]
-    valid = "__TERM_SAMJEONNIX__ invests __KRW_AMOUNT_0__, support __KRW_AMOUNT_1__"
-    assert re.fullmatch(first, valid)
-    assert not re.fullmatch(first, valid.replace("__KRW_AMOUNT_0__", ""))
-    assert not re.fullmatch(first, valid.replace("__TERM_SAMJEONNIX__", "삼전닉스"))
-    assert re.fullmatch(second, "Samsung Electro-Mechanics unveils a product")
+
+
+@pytest.mark.parametrize("amount", ["2000억弗", "61억 弗"])
+def test_dollar_shorthand_is_not_protected_as_krw(amount: str) -> None:
+    source = f"삼성전자 {amount} 동맹"
+    request = _title_request_item(_title("one", source), "title-0")
+    assert request["protected_currency_tokens"] == []
+    assert "달러" in request["source_text"]
+    assert "弗" not in request["source_text"]
+    assert _currency_conversions(source) == []
 
 
 @pytest.mark.parametrize(
@@ -140,10 +144,11 @@ def test_title_claim_direction_schema_and_server_reject_reversal(
 ):
     item = _title("one", source)
     schema = _title_output_schema({"title-0": item})
-    pattern = schema["properties"]["items"]["items"]["anyOf"][0]["properties"]["translated_text"][
-        "pattern"
+    text_schema = schema["properties"]["items"]["items"]["anyOf"][0]["properties"][
+        "translated_text"
     ]
-    assert bool(re.fullmatch(pattern, translated)) is accepted
+    # 생성 문법과 의미 검증을 분리해도 반대 방향의 문장은 저장 전에 거절한다.
+    assert "pattern" not in text_schema
     responses = FakeResponses(
         SimpleNamespace(
             items=(
