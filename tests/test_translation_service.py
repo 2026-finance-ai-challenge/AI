@@ -630,7 +630,7 @@ def test_long_news_narrative_batches_bounded_segments() -> None:
     assert len(result.translated_paragraphs) == len(paragraphs)
     assert responses.calls == 2
     assert {arguments["max_output_tokens"] for arguments in responses.history} == {
-        128_000,
+        None,
     }
 
 

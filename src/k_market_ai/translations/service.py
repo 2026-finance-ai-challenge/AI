@@ -94,7 +94,7 @@ KOREAN_CURRENCY_PATTERN = re.compile(
 )
 NON_KRW_QUANTITY_SUFFIX_PATTERN = re.compile(
     rf"^\s*(?:{_CURRENCY_NUMBER}\s*)?"
-    r"(?:주|명|건|개|대|회|일|년|개월|배|%|퍼센트|톤|평|리터|제곱미터|㎡|㎥|㎞|"
+    r"(?:주|명|건|개|대|회|일|년|개월|배|가구|세대|가정|곳|점|장|권|척|%|퍼센트|톤|평|리터|제곱미터|㎡|㎥|㎞|"
     r"(?:t|kg|km|mw|gw|kw|kwh|mwh|gwh|m²|m³|m2|m3|l)(?![a-z])|스위스프랑|프랑|달러|弗|유로|엔|위안|파운드)",
     re.I,
 )
@@ -102,7 +102,7 @@ KOREAN_MAGNITUDE_QUANTITY_PATTERN = re.compile(
     rf"(?P<amount>{_CURRENCY_NUMBER}\s*(?:조|억|만)"
     rf"(?:\s*{_CURRENCY_NUMBER}\s*(?:억|만))*"
     rf"(?:\s*{_CURRENCY_NUMBER})?)\s*"
-    r"(?P<unit>주|명|건|개|대|회|일|년|개월|배|톤|평|리터|제곱미터|㎡|㎥|㎞|"
+    r"(?P<unit>주|명|건|개|대|회|일|년|개월|배|가구|세대|가정|곳|점|장|권|척|톤|평|리터|제곱미터|㎡|㎥|㎞|"
     r"(?:t|kg|km|mw|gw|kw|kwh|mwh|gwh|m²|m³|m2|m3|l)(?![a-z])|스위스프랑|프랑|달러|弗|유로|엔|위안|파운드)",
     re.I,
 )
@@ -134,11 +134,8 @@ NEWS_SEGMENT_MAX_CHARACTERS = 6_000
 NEWS_BATCH_MAX_CHARACTERS = 24_000
 NEWS_BATCH_MAX_ITEMS = 24
 NEWS_BATCH_CONCURRENCY = 4
-MODEL_MAX_OUTPUT_TOKENS = 128_000
 TITLE_MAX_OUTPUT_TOKENS = 16_384
 TITLE_ASCII_PATTERN = r"^[\x20-\x7e]+$"
-NEWS_SEGMENT_MAX_OUTPUT_TOKENS = MODEL_MAX_OUTPUT_TOKENS
-NEWS_SUMMARY_MAX_OUTPUT_TOKENS = MODEL_MAX_OUTPUT_TOKENS
 DISCLOSURE_SECTION_MAX_OUTPUT_TOKENS = 16_384
 
 DISCLOSURE_TEXT_INSTRUCTIONS = """Translate one Korean regulatory filing text fragment into
@@ -436,7 +433,6 @@ class TranslationService:
                         payload,
                         _StructuredNewsSegmentBatch,
                         request_timeout=self._news_timeout,
-                        max_output_tokens=NEWS_SEGMENT_MAX_OUTPUT_TOKENS,
                         reasoning_effort="low",
                     )
                 expected = {item_id: source_text for item_id, _, source_text, _, _ in protected}
@@ -488,7 +484,6 @@ class TranslationService:
             },
             _StructuredNewsSummary,
             request_timeout=self._news_timeout,
-            max_output_tokens=NEWS_SUMMARY_MAX_OUTPUT_TOKENS,
         )
         what, why, impact = _validate_narrative_summaries(
             summary.what,
@@ -938,6 +933,17 @@ def _protect_currency_amounts(source_text: str) -> tuple[str, tuple[tuple[str, s
 def _iter_korean_currency_matches(source_text: str) -> Iterator[re.Match[str]]:
     for match in KOREAN_CURRENCY_PATTERN.finditer(source_text):
         matched = match.group(0).rstrip()
+        suffix = source_text[match.end() :]
+        # 단위에 붙은 조사와 단어를 구분해 '1 조국', '3 조건'을 금액으로 만들지 않는다.
+        if (
+            not matched.endswith("원")
+            and re.match(r"[가-힣]", suffix)
+            and not re.match(
+                r"(?:은|는|이|가|을|를|에|의|도|만|와|과|까지|부터|보다|으로|로|대|짜리)(?:$|[^가-힣])",
+                suffix,
+            )
+        ):
+            continue
         if not matched.endswith("원") and (
             source_text[max(0, match.start() - 1) : match.start()] == "제"
             or re.match(
@@ -1197,26 +1203,28 @@ def _normalize_optional_english_output(value: str | None) -> str | None:
 
 def _normalize_english_output(value: str) -> str:
     normalized = value
+    # 쉼표는 세 자리 숫자 묶음 안에서만 허용해 다음 금액의 KRW를 끌어오지 않는다.
+    number = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     normalized = re.sub(
-        r"\b(\d[\d,]*(?:\.\d+)?)(\s+(?:trillion|billion|million))?\s+KRW\b",
+        rf"(?<![\w.,])({number})(\s+(?:trillion|billion|million))?\s+KRW\b",
         lambda match: f"KRW {match.group(1)}{match.group(2) or ''}",
         normalized,
         flags=re.I,
     )
     normalized = re.sub(
-        r"\bKRW\s+(\d[\d,]*(?:\.\d+)?)\s+(trillion|billion|million)\s+won\b",
+        rf"\bKRW\s+({number})\s+(trillion|billion|million)\s+won\b",
         r"KRW \1 \2",
         normalized,
         flags=re.I,
     )
     normalized = re.sub(
-        r"(?<!KRW\s)\b(\d[\d,]*(?:\.\d+)?)\s+(trillion|billion|million)\s+won\b",
+        rf"(?<!KRW\s)(?<![\w.,])({number})\s+(trillion|billion|million)\s+won\b",
         r"KRW \1 \2",
         normalized,
         flags=re.I,
     )
     normalized = re.sub(
-        r"(?<!KRW\s)\b(\d[\d,]*(?:\.\d+)?)\s+won\b",
+        rf"(?<!KRW\s)(?<![\w.,])({number})\s+won\b",
         r"KRW \1",
         normalized,
         flags=re.I,
