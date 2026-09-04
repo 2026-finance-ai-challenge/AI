@@ -1,5 +1,6 @@
 import json
 import re
+from collections import Counter
 from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
@@ -56,7 +57,23 @@ class AskDisclosureHandler:
         )
         vector = (await self._embedding.embed([query]))[0]
         result: list[FilingEvidence] = []
+        latest_overview = (
+            financials
+            and from_date is None
+            and to_date is None
+            and re.search(r"\b(recent|latest|current)\b|최근|최신", question, re.IGNORECASE)
+            and not re.search(
+                r"\b(compar\w*|versus|vs|trend\w*|histor\w*)\b|비교|추이|과거",
+                question,
+                re.IGNORECASE,
+            )
+        )
         for filing in candidates:
+            # 최신 실적 개요는 종목별 최신 근거를 사용하고 과거 별도·잠정 실적과 혼합하지 않는다.
+            if latest_overview and any(
+                item.filing.stock_code == filing.stock_code for item in result
+            ):
+                continue
             hits = await self._repository.search(
                 filing.receipt_number,
                 vector,
@@ -104,10 +121,17 @@ class AskDisclosureHandler:
                 section_ids = [sid for c in selected_chunks for sid in c.section_ids]
                 method = "CURRENT_SOURCE_LEXICAL"
             if contents:
+                content = "\n\n".join(contents)[:7200]
+                # 같은 종목의 정정 전후 근거가 동일하면 최신 공시 한 건만 전달한다.
+                if any(
+                    item.filing.stock_code == filing.stock_code and item.content == content
+                    for item in result
+                ):
+                    continue
                 result.append(
                     FilingEvidence(
                         filing,
-                        "\n\n".join(contents)[:7200],
+                        content,
                         tuple(dict.fromkeys(section_ids)),
                         method,
                     )
@@ -223,12 +247,59 @@ def _financial_tables(sections: Sequence[SourceSection]) -> list[tuple[UUID, str
         if score < 50:
             continue
         # 압축 원문의 행·셀 순서를 보존하고 기간·단위를 표와 함께 전달한다.
-        rows = "\n".join(json.dumps(row, ensure_ascii=False) for row in section.table_rows)
-        content = context + "\nTable rows (original cell order; multi-row headers):\n" + rows
+        columns = _financial_columns(section.table_rows)
+        if columns and len(context) + len(columns) + 100 <= 6500:
+            content = (
+                context + "\nColumns with explicit reporting period (original values):\n" + columns
+            )
+        else:
+            rows = "\n".join(json.dumps(row, ensure_ascii=False) for row in section.table_rows)
+            content = context + "\nTable rows (original cell order; multi-row headers):\n" + rows
         if len(content) <= 6500:
             candidates.append((score, section.id, content))
     candidates.sort(key=lambda item: item[0], reverse=True)
     return [(section_id, content) for _, section_id, content in candidates[:1]]
+
+
+def _financial_columns(rows: tuple[tuple[str, ...], ...]) -> str | None:
+    # 반복되는 3개월·누적 헤더가 명확한 표만 전치해 전년 수치와 당기 수치의 혼동을 줄인다.
+    if len(rows) < 3 or not rows[0] or rows[0][0].strip():
+        return None
+    periods = rows[0][1:]
+    if not periods or not all(period.strip() for period in periods):
+        return None
+    expected = ("3개월", "누적") * len(periods)
+    if tuple(cell.strip() for cell in rows[1]) != expected:
+        return None
+    width = len(expected) + 1
+    if any(len(row) != width for row in rows[2:]):
+        return None
+    labels: list[str] = []
+    occurrences = Counter(row[0].strip() for row in rows[2:])
+    parents: list[tuple[int, str]] = []
+    for row in rows[2:]:
+        label = row[0]
+        indent = len(label) - len(label.lstrip())
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        # 원문의 들여쓰기로 구분된 지배기업·비지배지분 하위 항목은 상위 이름을 함께 준다.
+        labels.append(
+            f"{parents[-1][1]} > {label.strip()}"
+            if parents and occurrences[label.strip()] > 1
+            else label
+        )
+        parents.append((indent, label.strip()))
+    columns = []
+    for index, interval in enumerate(expected):
+        values = [(label, row[index + 1]) for label, row in zip(labels, rows[2:], strict=True)]
+        columns.append(
+            json.dumps(
+                {"period": periods[index // 2], "interval": interval, "rows": values},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+    return "\n".join(columns)
 
 
 def _citation(citation_id: str, hit: SearchHit) -> Citation:
