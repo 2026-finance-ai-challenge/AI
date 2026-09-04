@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Annotated, cast
 from uuid import UUID
 
@@ -11,6 +12,45 @@ from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler
 from k_market_ai.rag.domain.models import SelectedContext
 
 router = APIRouter(prefix="/internal/v1/disclosures", tags=["disclosure-rag"])
+
+
+class EvidenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    stock_codes: list[Annotated[str, Field(pattern=r"^[A-Z0-9]{6}$")]] = Field(
+        min_length=1, max_length=2
+    )
+    question: str = Field(min_length=1, max_length=4000)
+    from_date: date | None = None
+    to_date: date | None = None
+    financials: bool = False
+
+
+@router.post("/evidence")
+async def retrieve_evidence(
+    request: Request,
+    body: EvidenceRequest,
+    _: Annotated[None, Depends(authenticate_internal)],
+) -> list[dict[str, object]]:
+    evidence = await _handler(request).retrieve(
+        body.stock_codes,
+        body.question,
+        body.from_date,
+        body.to_date,
+        body.financials,
+    )
+    return [
+        {
+            "receipt_number": item.filing.receipt_number,
+            "stock_code": item.filing.stock_code,
+            "title": item.filing.title,
+            "filed_date": item.filing.filed_date,
+            "detected_at": item.filing.detected_at,
+            "content": item.content,
+            "section_ids": item.section_ids,
+            "retrieval_method": item.retrieval_method,
+        }
+        for item in evidence
+    ]
 
 
 class SelectedContextRequest(BaseModel):

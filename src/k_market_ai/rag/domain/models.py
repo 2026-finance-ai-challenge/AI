@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -8,6 +9,23 @@ class SectionKind(StrEnum):
     TITLE = "TITLE"
     TEXT = "TEXT"
     TABLE = "TABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class FilingCandidate:
+    receipt_number: str
+    stock_code: str
+    title: str
+    filed_date: date
+    detected_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FilingEvidence:
+    filing: FilingCandidate
+    content: str
+    section_ids: tuple[UUID, ...]
+    retrieval_method: str
 
 
 @dataclass(frozen=True, slots=True)

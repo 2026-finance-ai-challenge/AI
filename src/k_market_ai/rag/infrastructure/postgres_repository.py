@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -13,6 +13,7 @@ from k_market_ai.rag.application.ports import RagRepository
 from k_market_ai.rag.domain.chunker import chunk_sections, normalize_text
 from k_market_ai.rag.domain.models import (
     EmbeddedChunk,
+    FilingCandidate,
     IndexJob,
     MetadataEmbeddingJob,
     SearchHit,
@@ -44,6 +45,44 @@ def create_pool(database_url: str) -> AsyncConnectionPool[AsyncConnection[Any]]:
 class PostgresRagRepository(RagRepository):
     def __init__(self, pool: AsyncConnectionPool[AsyncConnection[Any]]) -> None:
         self._pool = pool
+
+    async def evidence_candidates(
+        self,
+        stock_codes: Sequence[str],
+        from_date: date | None,
+        to_date: date | None,
+        financials: bool,
+    ) -> list[FilingCandidate]:
+        if not stock_codes:
+            return []
+        async with self._pool.connection() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT receipt_number, stock_code, title_ko, filed_date, detected_at
+                FROM (
+                    SELECT d.receipt_number, s.stock_code, d.title_ko, d.filed_date,
+                           d.detected_at, row_number() OVER (
+                               PARTITION BY s.stock_code
+                               ORDER BY d.filed_date DESC, d.detected_at DESC, d.receipt_number DESC
+                           ) AS rank
+                    FROM disclosure d
+                    JOIN security s ON s.id = d.security_id
+                    JOIN service_stock_universe u ON u.stock_code = s.stock_code
+                    WHERE s.stock_code = ANY(%s) AND s.active AND s.common_stock
+                      AND d.document_status = 'READY'
+                      AND (%s::DATE IS NULL OR d.filed_date >= %s)
+                      AND (%s::DATE IS NULL OR d.filed_date <= %s)
+                      AND (NOT %s OR d.title_ko ~
+                           '사업보고서|분기보고서|반기보고서|감사보고서|영업.*실적|매출액.*손익|잠정.*실적')
+                      AND EXISTS (SELECT 1 FROM disclosure_document doc
+                                  WHERE doc.disclosure_id = d.id AND doc.is_current)
+                ) candidates WHERE rank <= 3
+                ORDER BY filed_date DESC, detected_at DESC, receipt_number DESC
+                """,
+                (list(stock_codes), from_date, from_date, to_date, to_date, financials),
+            )
+            rows = await cursor.fetchall()
+        return [FilingCandidate(str(r[0]), str(r[1]), str(r[2]), r[3], r[4]) for r in rows]
 
     async def claim_index_job(self, worker_id: str) -> IndexJob | None:
         async with self._pool.connection() as connection, connection.transaction():
