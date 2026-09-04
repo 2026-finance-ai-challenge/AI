@@ -79,7 +79,34 @@ def test_title_schema_limits_shape_without_coupling_semantic_token_order() -> No
 
 def test_deployment_environment_cannot_mislabel_title_prompt(monkeypatch) -> None:
     monkeypatch.setenv("KMARKET_AI_TITLE_TRANSLATION_PROMPT_VERSION", "obsolete-prompt")
-    assert Settings().title_translation_prompt_version == "financial-title-translation-v12"
+    assert Settings().title_translation_prompt_version == "financial-title-translation-v13"
+
+
+def test_price_nickname_is_expanded_before_currency_protection() -> None:
+    item = _title("one", "두산에너빌리티, 장중 '8만빌리티' 회복…다음장 흐름 주목")
+    request = _title_request_item(item, "title-0")
+    assert (
+        request["source_text"]
+        == "두산에너빌리티, 장중 '__KRW_AMOUNT_0__ 주가 수준' 회복…다음장 흐름 주목"
+    )
+    assert request["protected_currency_tokens"] == ["__KRW_AMOUNT_0__"]
+
+
+def test_currency_token_cannot_hide_an_untranslated_nickname_suffix() -> None:
+    source = _title("one", "두산에너빌리티, 장중 '8만빌리티' 회복…다음장 흐름 주목")
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text="Doosan Enerbility recovers '__KRW_AMOUNT_0__Bil... wait",
+                ),
+            )
+        )
+    )
+    with pytest.raises(AppError) as error:
+        asyncio.run(_service(responses).translate_titles((source,), "en", "news-title-v3"))
+    assert error.value.code == "AI_INVALID_OUTPUT"
 
 
 @pytest.mark.parametrize("amount", ["2000억弗", "61억 弗"])
