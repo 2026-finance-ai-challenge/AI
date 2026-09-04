@@ -11,7 +11,11 @@ from fastapi.testclient import TestClient
 
 from k_market_ai.core.config import Settings
 from k_market_ai.main import create_app
-from k_market_ai.rag.application.ask_disclosure import AskDisclosureHandler, _financial_columns
+from k_market_ai.rag.application.ask_disclosure import (
+    AskDisclosureHandler,
+    _financial_columns,
+    _financial_period_dates,
+)
 from k_market_ai.rag.domain.models import FilingCandidate, SearchHit, SectionKind, SourceSection
 
 
@@ -150,7 +154,7 @@ def test_financial_evidence_preserves_header_and_period_cell_order():
     assert result[0].retrieval_method == "CURRENT_STRUCTURED_FINANCIAL"
     assert "2026.01.01~06.30" in result[0].content
     assert '"period":"2026 반기","interval":"누적","rows":[["매출액","200"]]' in result[0].content
-    assert '"period":"2025 반기","interval":"누적","rows":[["매출액","180"]]' in result[0].content
+    assert '"period":"2025 반기"' not in result[0].content
 
 
 def test_financial_columns_keep_current_prior_and_duplicate_metric_rows_separate():
@@ -179,6 +183,57 @@ def test_financial_columns_keep_current_prior_and_duplicate_metric_rows_separate
     assert columns[1]["rows"][3][0] == "당기총포괄손익 > 지배기업 소유주지분"
     for i, column in enumerate(columns):
         assert [row[1] for row in column["rows"]] == [row[i + 1] for row in rows[2:]]
+    current = _financial_columns(rows, latest_only=True)
+    assert current is not None
+    assert [json.loads(line)["period"] for line in current.splitlines()] == ["제 32 기 반기"] * 2
+    assert "244,816" in current and "372,149" not in current
+
+
+def test_latest_period_is_chosen_by_explicit_term_not_column_position():
+    rows = (
+        ("", "제 31 기 반기", "제 32 기 반기"),
+        ("3개월", "누적", "3개월", "누적"),
+        ("순이익", "1", "2", "3", "4"),
+    )
+    result = _financial_columns(rows, latest_only=True)
+    assert result is not None
+    columns = [json.loads(line) for line in result.splitlines()]
+    assert [c["rows"][0][1] for c in columns] == ["3", "4"]
+
+
+def test_mixed_year_and_term_headers_are_not_compared_as_same_scale():
+    rows = (
+        ("", "제 32 기 반기", "2025 반기"),
+        ("3개월", "누적", "3개월", "누적"),
+        ("순이익", "1", "2", "3", "4"),
+    )
+    result = _financial_columns(rows, latest_only=True)
+    assert result is not None and len(result.splitlines()) == 4
+
+
+@pytest.mark.parametrize("interval,start", [("3개월", "2026-04-01"), ("누적", "2026-01-01")])
+def test_half_year_and_three_month_periods_have_distinct_start_dates(interval, start):
+    context = (
+        "제 32 기 반기 2026.01.01 부터 2026.06.30 까지 "
+        "제 31 기 반기 2025.01.01 부터 2025.06.30 까지"
+    )
+    assert _financial_period_dates(context, "제 32 기 반기", interval) == {
+        "start_date": start,
+        "end_date": "2026-06-30",
+    }
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "제32기 반기 2026.01.01~2026.06.30",
+        "제32기 반기 2026.01.01 부터 2026.02.31 까지",
+        "제32기 반기 2026.06.30 부터 2026.01.01 까지",
+        "제32기 반기 2026.01.01 부터 2026.06.15 까지",
+    ],
+)
+def test_missing_or_ambiguous_quarter_dates_are_not_invented(context):
+    assert _financial_period_dates(context, "제32기 반기", "3개월") == {}
 
 
 @pytest.mark.parametrize(
