@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from openai import APITimeoutError, OpenAIError, RateLimitError
+from pydantic import ValidationError
 
 from k_market_ai.core.config import Settings
 from k_market_ai.core.errors import AppError
@@ -518,7 +519,7 @@ def test_news_narrative_observes_placeholders_without_replacing_or_rejecting(cap
     assert responses.calls == 2
 
 
-def test_news_narrative_observes_summary_expression_without_rejecting(caplog) -> None:
+def test_news_narrative_rejects_untranslated_english_summary() -> None:
     title = "채용 확대"
     paragraphs = ("회사는 인재 확보를 위해 채용을 확대했다.", "경쟁력을 강화할 계획이다.")
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -534,13 +535,13 @@ def test_news_narrative_observes_summary_expression_without_rejecting(caplog) ->
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_news_narrative(
-            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v6"
+            )
         )
-    )
-    assert result.why == "The company seeks more talent 高"
-    assert "english_expression_review" in caplog.text
+    assert captured.value.code == "AI_INVALID_OUTPUT"
     assert responses.calls == 2
 
 
@@ -572,7 +573,7 @@ def test_news_narrative_observes_long_summary_without_truncating_or_retrying(cap
     assert responses.calls == 2
 
 
-def test_news_narrative_observes_body_expression_without_rejecting(caplog) -> None:
+def test_news_narrative_rejects_untranslated_body() -> None:
     title = "실적 발표"
     paragraphs = ("매출이 증가했다.",)
     source_hash = _hash(canonical_news_source(title, paragraphs, "FULL_ARTICLE"))
@@ -585,21 +586,25 @@ def test_news_narrative_observes_body_expression_without_rejecting(caplog) -> No
         )
     )
 
-    result = asyncio.run(
-        _service(responses).translate_news_narrative(
-            source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
+    with pytest.raises(AppError) as captured:
+        asyncio.run(
+            _service(responses).translate_news_narrative(
+                source_hash, title, paragraphs, "FULL_ARTICLE", "en", "news-v1"
+            )
         )
-    )
-    assert result.translated_paragraphs == ("매출 increased.",)
-    assert "english_expression_review" in caplog.text
+    assert captured.value.code == "AI_INVALID_OUTPUT"
 
 
-def test_news_segment_schema_validates_structure_not_expression() -> None:
-    assert (
+def test_news_segment_schema_requires_english_output() -> None:
+    with pytest.raises(ValidationError):
         _StructuredNewsSegmentItem.model_validate(
             {"id": "segment-0", "translated_text": "The company strengthened 전문 역량."}
+        )
+    assert (
+        _StructuredNewsSegmentItem.model_validate(
+            {"id": "segment-0", "translated_text": "The company strengthened its expertise."}
         ).translated_text
-        == "The company strengthened 전문 역량."
+        == "The company strengthened its expertise."
     )
 
 
