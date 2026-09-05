@@ -198,7 +198,7 @@ class _StructuredNewsSegmentItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^segment-[0-9]+$")
-    translated_text: str = Field(
+    translated_text: EnglishGeneratedText = Field(
         min_length=1,
         max_length=120_000,
         description="Complete English-only translation of the matching source segment.",
@@ -231,6 +231,20 @@ class _StructuredNewsSummary(BaseModel):
         min_length=1,
         max_length=120_000,
         description="One source-grounded impact sentence, never the label 'Impact'.",
+    )
+
+
+class _StructuredEnglishNewsSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    what: EnglishGeneratedText = Field(
+        description="One English sentence stating what happened, never the label 'What'.",
+    )
+    why: EnglishGeneratedText = Field(
+        description="One source-grounded English reason sentence, never the label 'Why'.",
+    )
+    impact: EnglishGeneratedText = Field(
+        description="One source-grounded English impact sentence, never the label 'Impact'.",
     )
 
 
@@ -457,7 +471,7 @@ class TranslationService:
             translated_paragraphs = tuple(paragraph.strip() for paragraph in paragraphs)
         if any(not paragraph for paragraph in translated_paragraphs):
             raise _invalid_output()
-        summary = await self._parse(
+        summary: _StructuredNewsSummary | _StructuredEnglishNewsSummary = await self._parse(
             NEWS_SUMMARY_INSTRUCTIONS if locale == "en" else NEWS_SUMMARY_KO_INSTRUCTIONS,
             {
                 "translated_paragraphs": translated_paragraphs,
@@ -465,7 +479,7 @@ class TranslationService:
                 "target_locale": target_locale,
                 "translation_version": translation_version,
             },
-            _StructuredNewsSummary,
+            _StructuredEnglishNewsSummary if locale == "en" else _StructuredNewsSummary,
             request_timeout=self._news_timeout,
         )
         what, why, impact = _validate_narrative_summaries(

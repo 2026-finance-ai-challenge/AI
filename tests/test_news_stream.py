@@ -135,7 +135,7 @@ def test_incomplete_summary_is_never_published():
     assert completed_summary(value) is not None
 
 
-def test_expression_observation_does_not_block_or_rewrite_stream(caplog):
+def test_stream_schema_blocks_untranslated_script():
     value = "Revenue is ₩700; company label 高 is quoted."
     calls, events = generate(
         [
@@ -147,15 +147,13 @@ def test_expression_observation_does_not_block_or_rewrite_stream(caplog):
     async def run():
         return [event async for event in events]
 
-    result = asyncio.run(run())[-1]
-    assert result["type"] == "complete"
-    assert result["result"]["translatedParagraphs"][0] == value
-    assert "english_expression_review" in caplog.text
-    assert value not in caplog.text
+    with pytest.raises(AppError) as captured:
+        asyncio.run(run())
+    assert captured.value.code == "AI_INVALID_OUTPUT"
     schema = calls[0]["text"]["format"]["schema"]
     assert (
-        "pattern"
-        not in schema["$defs"]["_StructuredNewsSegmentItem"]["properties"]["translated_text"]
+        schema["$defs"]["_StructuredNewsSegmentItem"]["properties"]["translated_text"]["pattern"]
+        == r"^[^\u1100-\u11ff\u3131-\u318e\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7a3]*$"
     )
     assert json.loads(calls[0]["input"])["items"][0] == {
         "id": "segment-0",
