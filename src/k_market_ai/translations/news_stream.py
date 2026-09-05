@@ -16,6 +16,7 @@ from k_market_ai.translations.service import (
     _provider_error,
     _report_news_quality,
     _segment_news_paragraphs,
+    _StructuredEnglishNewsSummary,
     _StructuredNewsSegmentItem,
     _StructuredNewsSummary,
     _validate_narrative_summaries,
@@ -57,7 +58,7 @@ Keep summaries first and items second in the requested JSON schema."""
 
 class BilingualSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    en: _StructuredNewsSummary
+    en: _StructuredEnglishNewsSummary
     ko: _StructuredNewsSummary
 
 
