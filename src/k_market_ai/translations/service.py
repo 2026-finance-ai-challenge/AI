@@ -47,15 +47,12 @@ not a person named Noh and not a negative claim. Preserve the source's affirmati
 A share-price nickname combines a price and company name: '8만빌리티' means Enerbility at
 KRW 80,000. Translate the price level in context, not a literal 'billity' suffix appended to
 a protected amount. Samjeonnix is an intentional protected nickname and must stay unchanged.
-Protected tokens such as __KRW_AMOUNT_0__ and __TERM_SAMJEONNIX__ are server-owned anchors.
-When the schema requests translated_fragments, do not copy protected tokens or replace them with
-their values in any fragment. Never emit Korean or romanized units such as eok, jo, or man-won.
+Canonical English values such as KRW 1 million and Samjeonnix are server-verified anchors already
+inserted into source_text. Preserve each one exactly once in its source position. Never emit Korean
+or romanized units such as eok, jo, or man-won.
 A protected currency token is a complete KRW amount, not a count; for 금액대 preserve the
 approximation as 'around' rather than appending 'units'. Do not add facts. Return every supplied
 short item ID exactly once. The server owns source hashes; do not generate hashes.
-Return the English text before the first token, between each token, and after the last token in
-source token order. Include natural surrounding spaces in the fragments. The server inserts the
-canonical protected values, so an edge fragment may be empty.
 Return only the requested schema."""
 
 TITLE_ROLE_INSTRUCTIONS = """Preserve who acts and who receives the action, including passive
@@ -69,8 +66,8 @@ it does not mean X files a claim against Y. 'X, Y 상대 손배 청구' means X 
 피소 and 제소 are opposite roles: faces a lawsuit versus files a lawsuit. Likewise, distinguish
 winning an order FROM a customer from placing an order WITH a supplier. Preserve allegation,
 proposal, expectation and confirmation as stated; do not promote them to established facts.
-Each item's protected tokens must appear exactly once in source order inside that item's
-complete English title. Never move a token to another item or append a missing amount as a
+Each server-verified canonical value must appear exactly once in its source position inside that
+item's complete English title. Never move a value to another item or append a missing amount as a
 separate note. A headline that ends mid-word is truncated input: preserve the ellipsis without
 inventing the missing claim. Return every supplied ID once, even for near-identical headlines."""
 
@@ -1023,15 +1020,13 @@ def _protected_title_source(item: TitleSource) -> tuple[str, dict[str, str]]:
 
 def _title_request_item(item: TitleSource, identifier: str) -> dict[str, object]:
     protected_source, protected_values = _protected_title_source(item)
+    model_source = protected_source
+    for token, value in protected_values.items():
+        model_source = model_source.replace(token, value)
     request: dict[str, object] = {
         "id": identifier,
-        "source_text": protected_source,
-        "protected_currency_tokens": [
-            token for token in protected_values if token.startswith("__KRW")
-        ],
-        "protected_term_tokens": (
-            ["__TERM_SAMJEONNIX__"] if "삼전닉스" in item.source_text else []
-        ),
+        "source_text": model_source,
+        "server_verified_values": list(protected_values.values()),
     }
     roles = _title_event_roles(item.source_text)
     if roles is not None:
@@ -1071,37 +1066,16 @@ def _title_tokens(item: TitleSource) -> list[str]:
 
 
 def _title_output_schema(sources: dict[str, TitleSource]) -> dict[str, Any]:
-    # 보호 값은 모델이 복사하지 않고 고정 길이 조각 사이에 서버가 삽입한다.
     variants = []
-    for identifier, source in sources.items():
-        token_count = len(_title_tokens(source))
-        output_property = (
-            {
-                "translated_fragments": {
-                    "type": "array",
-                    "minItems": token_count + 1,
-                    "maxItems": token_count + 1,
-                    "items": {
-                        "type": "string",
-                        "maxLength": 1_000,
-                        "pattern": TITLE_FRAGMENT_ASCII_PATTERN,
-                    },
-                    "description": (
-                        "English text before, between, and after protected tokens. "
-                        "Never include a protected token or its canonical value."
-                    ),
-                }
+    for identifier in sources:
+        output_property = {
+            "translated_text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1_000,
+                "pattern": TITLE_ASCII_PATTERN,
             }
-            if token_count
-            else {
-                "translated_text": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1_000,
-                    "pattern": TITLE_ASCII_PATTERN,
-                }
-            }
-        )
+        }
         variants.append(
             {
                 "type": "object",
@@ -1132,12 +1106,12 @@ def _generated_title_text(source: TitleSource, output: _StructuredTitle) -> str:
     tokens = _title_tokens(source)
     translated_text = cast(str | None, getattr(output, "translated_text", None))
     fragments = cast(tuple[str, ...] | None, getattr(output, "translated_fragments", None))
-    if not tokens:
-        if fragments is not None or translated_text is None:
+    if translated_text is not None:
+        if fragments is not None:
             raise _invalid_output("title_output_contract_mismatch")
         return translated_text
 
-    if translated_text is not None or fragments is None or len(fragments) != len(tokens) + 1:
+    if not tokens or fragments is None or len(fragments) != len(tokens) + 1:
         raise _invalid_output("title_fragment_count_mismatch")
     if any(
         len(fragment) > 1_000 or re.fullmatch(TITLE_FRAGMENT_ASCII_PATTERN, fragment) is None
@@ -1179,6 +1153,18 @@ def _generated_title_text(source: TitleSource, output: _StructuredTitle) -> str:
 def _verify_title_tokens(source: TitleSource, translated: str) -> None:
     expected = _title_tokens(source)
     actual = _TITLE_TOKEN_PATTERN.findall(translated)
+    _, protected_values = _protected_title_source(source)
+    if expected and not actual:
+        missing = [
+            token
+            for token in expected
+            if translated.casefold().count(protected_values[token].casefold()) != 1
+        ]
+        if not missing:
+            return
+        if any(token.startswith("__KRW") for token in missing):
+            raise _invalid_output("missing_currency_value")
+        raise _invalid_output("title_protected_term_missing")
     if (
         "두산에너빌리티" in source.source_text
         and re.search(r"\d[\d,]*(?:\.\d+)?\s*만빌리티", source.source_text)
@@ -1201,7 +1187,8 @@ def _verify_title_claim_direction(source: str, translated: str) -> None:
         return
     incoming = roles["topic_role"] == "claim_recipient"
     # 청구액이 claim과 from 사이에 있어도 당사자 방향은 동일하다.
-    amount = r"(?:\s+(?:of|for|worth)\s+__KRW_AMOUNT_[0-9]+__)?"
+    protected_amount = r"(?:__KRW_AMOUNT_[0-9]+__|KRW\s+[\d,.]+\s+(?:million|billion|trillion))"
+    amount = rf"(?:\s+(?:of|for|worth)\s+{protected_amount})?"
     pattern = (
         rf"\bfaces\b.*\bdamages claim{amount}\s+from\b"
         if incoming

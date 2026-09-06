@@ -13,7 +13,6 @@ from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
     TITLE_ASCII_PATTERN,
-    TITLE_FRAGMENT_ASCII_PATTERN,
     TranslationService,
     _canonicalize_non_krw_quantities,
     _currency_conversions,
@@ -62,7 +61,7 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert schema["properties"]["items"]["maxItems"] == 2
 
 
-def test_title_schema_anchors_protected_values_between_fixed_count_fragments() -> None:
+def test_title_schema_uses_one_ascii_text_contract_for_every_title() -> None:
     schema = _title_output_schema(
         {
             "title-0": _title("one", "삼전닉스 투자 1조원, 지원 20억원"),
@@ -70,10 +69,7 @@ def test_title_schema_anchors_protected_values_between_fixed_count_fragments() -
         }
     )
     variants = schema["properties"]["items"]["items"]["anyOf"]
-    protected = variants[0]["properties"]["translated_fragments"]
-    assert protected["minItems"] == protected["maxItems"] == 4
-    assert protected["items"]["pattern"] == TITLE_FRAGMENT_ASCII_PATTERN
-    assert "translated_text" not in variants[0]["properties"]
+    assert variants[0]["properties"]["translated_text"]["pattern"] == TITLE_ASCII_PATTERN
     assert variants[1]["properties"]["translated_text"]["pattern"] == TITLE_ASCII_PATTERN
     assert variants[0]["properties"]["id"]["enum"] == ["title-0"]
     assert variants[1]["properties"]["id"]["enum"] == ["title-1"]
@@ -81,7 +77,7 @@ def test_title_schema_anchors_protected_values_between_fixed_count_fragments() -
 
 def test_deployment_environment_cannot_mislabel_title_prompt(monkeypatch) -> None:
     monkeypatch.setenv("KMARKET_AI_TITLE_TRANSLATION_PROMPT_VERSION", "obsolete-prompt")
-    assert Settings().title_translation_prompt_version == "financial-title-translation-v16"
+    assert Settings().title_translation_prompt_version == "financial-title-translation-v17"
 
 
 def test_news_prompt_version_is_owned_by_code(monkeypatch):
@@ -94,9 +90,9 @@ def test_price_nickname_is_expanded_before_currency_protection() -> None:
     request = _title_request_item(item, "title-0")
     assert (
         request["source_text"]
-        == "두산에너빌리티, 장중 '__KRW_AMOUNT_0__ 주가 수준' 회복…다음장 흐름 주목"
+        == "두산에너빌리티, 장중 'KRW 80,000 주가 수준' 회복…다음장 흐름 주목"
     )
-    assert request["protected_currency_tokens"] == ["__KRW_AMOUNT_0__"]
+    assert request["server_verified_values"] == ["KRW 80,000"]
 
 
 def test_currency_token_cannot_hide_an_untranslated_nickname_suffix() -> None:
@@ -124,7 +120,7 @@ def test_currency_token_cannot_hide_an_untranslated_nickname_suffix() -> None:
 def test_dollar_shorthand_is_not_protected_as_krw(amount: str) -> None:
     source = f"삼성전자 {amount} 동맹"
     request = _title_request_item(_title("one", source), "title-0")
-    assert request["protected_currency_tokens"] == []
+    assert request["server_verified_values"] == []
     assert "달러" in request["source_text"]
     assert "弗" not in request["source_text"]
     assert _currency_conversions(source) == []
@@ -202,18 +198,19 @@ def test_title_claim_direction_schema_and_server_reject_reversal(
 ):
     item = _title("one", source)
     schema = _title_output_schema({"title-0": item})
-    fragment_schema = schema["properties"]["items"]["items"]["anyOf"][0]["properties"][
+    assert (
         "translated_fragments"
-    ]
-    fragments = tuple(translated.split("__KRW_AMOUNT_0__"))
-    assert len(fragments) == fragment_schema["minItems"]
+        not in schema["properties"]["items"]["items"]["anyOf"][0]["properties"]
+    )
+    canonical_value = _title_request_item(item, "title-0")["server_verified_values"][0]
+    translated = translated.replace("__KRW_AMOUNT_0__", canonical_value)
     responses = FakeResponses(
         SimpleNamespace(
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text=None,
-                    translated_fragments=fragments,
+                    translated_text=translated,
+                    translated_fragments=None,
                 ),
             )
         )
@@ -303,12 +300,10 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
     result = asyncio.run(_service(responses).translate_titles((source,), "en", "title-v1"))
 
     payload = json.loads(str(responses.arguments["input"]))
-    assert payload["items"][0]["source_text"] == (
-        "목표가 __KRW_AMOUNT_0__, 투자유치 __KRW_AMOUNT_1__"
-    )
-    assert payload["items"][0]["protected_currency_tokens"] == [
-        "__KRW_AMOUNT_0__",
-        "__KRW_AMOUNT_1__",
+    assert payload["items"][0]["source_text"] == "목표가 KRW 2.4 million, 투자유치 KRW 11.1 billion"
+    assert payload["items"][0]["server_verified_values"] == [
+        "KRW 2.4 million",
+        "KRW 11.1 billion",
     ]
     assert result.items[0].translated_text.startswith("Target Price")
 
@@ -450,8 +445,11 @@ def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None
         "'Samjeonnix' incentives lift spending; consumption KRW 1.1 trillion rises"
     )
     payload = json.loads(str(responses.arguments["input"]))
-    assert payload["items"][0]["source_text"].startswith("'__TERM_SAMJEONNIX__'")
-    assert payload["items"][0]["protected_term_tokens"] == ["__TERM_SAMJEONNIX__"]
+    assert payload["items"][0]["source_text"].startswith("'Samjeonnix'")
+    assert payload["items"][0]["server_verified_values"] == [
+        "KRW 1.1 trillion",
+        "Samjeonnix",
+    ]
 
 
 def test_title_batch_classifies_provider_timeout() -> None:
