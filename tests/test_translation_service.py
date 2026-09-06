@@ -81,7 +81,7 @@ def test_title_schema_anchors_protected_values_between_fixed_count_fragments() -
 
 def test_deployment_environment_cannot_mislabel_title_prompt(monkeypatch) -> None:
     monkeypatch.setenv("KMARKET_AI_TITLE_TRANSLATION_PROMPT_VERSION", "obsolete-prompt")
-    assert Settings().title_translation_prompt_version == "financial-title-translation-v15"
+    assert Settings().title_translation_prompt_version == "financial-title-translation-v16"
 
 
 def test_news_prompt_version_is_owned_by_code(monkeypatch):
@@ -236,7 +236,10 @@ def test_title_fragments_discard_provider_injected_protected_tokens():
                 SimpleNamespace(
                     id="title-0",
                     translated_text=None,
-                    translated_fragments=("Samsung Electro-Mechanics invests ", "__KRW_AMOUNT_7__"),
+                    translated_fragments=(
+                        "Samsung Electro-Mechanics invests ",
+                        "__KRW_AMOUNT_7__','",
+                    ),
                 ),
             )
         )
