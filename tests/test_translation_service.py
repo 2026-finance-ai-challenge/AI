@@ -81,7 +81,7 @@ def test_title_schema_anchors_protected_values_between_fixed_count_fragments() -
 
 def test_deployment_environment_cannot_mislabel_title_prompt(monkeypatch) -> None:
     monkeypatch.setenv("KMARKET_AI_TITLE_TRANSLATION_PROMPT_VERSION", "obsolete-prompt")
-    assert Settings().title_translation_prompt_version == "financial-title-translation-v14"
+    assert Settings().title_translation_prompt_version == "financial-title-translation-v15"
 
 
 def test_news_prompt_version_is_owned_by_code(monkeypatch):
@@ -229,7 +229,7 @@ def test_title_claim_direction_schema_and_server_reject_reversal(
     assert responses.calls == 1
 
 
-def test_title_fragments_reject_provider_injected_protected_tokens(caplog):
+def test_title_fragments_discard_provider_injected_protected_tokens():
     responses = FakeResponses(
         SimpleNamespace(
             items=(
@@ -241,16 +241,15 @@ def test_title_fragments_reject_provider_injected_protected_tokens(caplog):
             )
         )
     )
-    with pytest.raises(AppError) as error:
-        asyncio.run(
-            _service(responses).translate_titles(
-                (_title("one", "삼성전기 투자 1조원"),),
-                "en",
-                "title-v1",
-            )
+    result = asyncio.run(
+        _service(responses).translate_titles(
+            (_title("one", "삼성전기 투자 1조원"),),
+            "en",
+            "title-v1",
         )
-    assert error.value.code == "AI_INVALID_OUTPUT"
-    assert "title_fragment_contract_mismatch" in caplog.text
+    )
+
+    assert result.items[0].translated_text == "Samsung Electro-Mechanics invests KRW 1 trillion"
     assert responses.calls == 1
 
 

@@ -1139,12 +1139,12 @@ def _generated_title_text(source: TitleSource, output: _StructuredTitle) -> str:
     if translated_text is not None or fragments is None or len(fragments) != len(tokens) + 1:
         raise _invalid_output("title_fragment_count_mismatch")
     if any(
-        len(fragment) > 1_000
-        or re.fullmatch(TITLE_FRAGMENT_ASCII_PATTERN, fragment) is None
-        or _TITLE_TOKEN_PATTERN.search(fragment)
+        len(fragment) > 1_000 or re.fullmatch(TITLE_FRAGMENT_ASCII_PATTERN, fragment) is None
         for fragment in fragments
     ):
         raise _invalid_output("title_fragment_contract_mismatch")
+    # 구조화 출력이 서버 앵커를 되풀이해도 해당 문자열만 제거하고 검증된 값을 한 번만 삽입한다.
+    fragments = tuple(_TITLE_TOKEN_PATTERN.sub("", fragment) for fragment in fragments)
     _, protected_values = _protected_title_source(source)
     combined_fragments = " ".join(fragments)
     if any(
