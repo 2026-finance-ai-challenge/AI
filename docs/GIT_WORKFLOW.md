@@ -24,9 +24,9 @@
 4. 사용자 승인 후 커밋과 푸시
 5. `dev` 대상 PR 생성 및 스쿼시 병합
 6. 작업 브랜치 삭제
-7. 배포 시 `dev`에서 `main` 대상 PR 생성
+7. 배포 시 `dev`에서 `main` 대상 PR 생성 및 스쿼시 병합
 
-`main`과 `dev`는 영구 브랜치다. 작업 브랜치 PR에만 `--delete-branch`를 사용한다. `dev -> main` 배포 PR은 브랜치를 삭제하지 않고 병합하며, 병합 직후 원격 `dev` 존재 여부를 확인한다. 실수로 `dev`가 삭제되면 기본 브랜치의 `Permanent branch recovery` 워크플로가 현재 `main`에서 즉시 복원한다.
+`main`과 `dev`는 영구 브랜치다. 작업 브랜치 PR에만 `--delete-branch`를 사용한다. 일반 작업 PR과 `dev -> main` 배포 PR은 스쿼시 병합한다. 갈라진 영구 브랜치 이력을 복구하는 동기화 전용 PR만 사용자의 명시적 승인을 받은 경우 merge commit을 사용할 수 있다. 배포 PR은 브랜치를 삭제하지 않고 병합하며, 병합 직후 원격 `dev` 존재 여부를 확인한다. 실수로 `dev`가 삭제되면 기본 브랜치의 `Permanent branch recovery` 워크플로가 현재 `main`에서 즉시 복원한다.
 
 ## 커밋과 PR 제목
 
