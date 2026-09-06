@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     @property
     def title_translation_prompt_version(self) -> str:
         # 프롬프트 식별자는 실행 코드와 함께 변경하며 외부 배포 설정으로 덮어쓰지 않는다.
-        return "financial-title-translation-v14"
+        return "financial-title-translation-v15"
 
     @property
     def docs_enabled(self) -> bool:
