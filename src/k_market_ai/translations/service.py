@@ -1062,6 +1062,7 @@ def _title_event_roles(source: str) -> dict[str, str] | None:
 
 
 _TITLE_TOKEN_PATTERN = re.compile(r"__KRW_AMOUNT_[0-9]+__|__TERM_[A-Z_]+__")
+_TITLE_SERIALIZED_SEPARATOR_PATTERN = re.compile(r"""["']\s*,\s*["']""")
 
 
 def _title_tokens(item: TitleSource) -> list[str]:
@@ -1143,8 +1144,14 @@ def _generated_title_text(source: TitleSource, output: _StructuredTitle) -> str:
         for fragment in fragments
     ):
         raise _invalid_output("title_fragment_contract_mismatch")
-    # 구조화 출력이 서버 앵커를 되풀이해도 해당 문자열만 제거하고 검증된 값을 한 번만 삽입한다.
-    fragments = tuple(_TITLE_TOKEN_PATTERN.sub("", fragment) for fragment in fragments)
+    # 구조화 출력이 서버 앵커를 되풀이해도 해당 문자열과 직렬화 구분자만 제거한다.
+    fragments = tuple(
+        _TITLE_SERIALIZED_SEPARATOR_PATTERN.sub(
+            " ",
+            _TITLE_TOKEN_PATTERN.sub("", fragment),
+        )
+        for fragment in fragments
+    )
     _, protected_values = _protected_title_source(source)
     combined_fragments = " ".join(fragments)
     if any(
