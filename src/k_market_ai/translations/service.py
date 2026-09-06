@@ -5,7 +5,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Iterator, Sequence
 from decimal import Decimal
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from openai import APITimeoutError, AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -47,12 +47,15 @@ not a person named Noh and not a negative claim. Preserve the source's affirmati
 A share-price nickname combines a price and company name: '8만빌리티' means Enerbility at
 KRW 80,000. Translate the price level in context, not a literal 'billity' suffix appended to
 a protected amount. Samjeonnix is an intentional protected nickname and must stay unchanged.
-Copy every protected currency token such as __KRW_AMOUNT_0__ and protected name token such as
-__TERM_SAMJEONNIX__ exactly once without interpreting, altering, or removing it; the server
-replaces these tokens after generation. Never emit Korean or romanized units such as eok, jo, or
-man-won. A protected currency token is a complete KRW amount, not a count; for 금액대 preserve
-the approximation as 'around' rather than appending 'units'. Do not add facts. Return every
-supplied short item ID exactly once. The server owns source hashes; do not generate hashes.
+Protected tokens such as __KRW_AMOUNT_0__ and __TERM_SAMJEONNIX__ are server-owned anchors.
+When the schema requests translated_fragments, do not copy protected tokens or replace them with
+their values in any fragment. Never emit Korean or romanized units such as eok, jo, or man-won.
+A protected currency token is a complete KRW amount, not a count; for 금액대 preserve the
+approximation as 'around' rather than appending 'units'. Do not add facts. Return every supplied
+short item ID exactly once. The server owns source hashes; do not generate hashes.
+Return the English text before the first token, between each token, and after the last token in
+source token order. Include natural surrounding spaces in the fragments. The server inserts the
+canonical protected values, so an edge fragment may be empty.
 Return only the requested schema."""
 
 TITLE_ROLE_INSTRUCTIONS = """Preserve who acts and who receives the action, including passive
@@ -134,6 +137,7 @@ NEWS_BATCH_MAX_ITEMS = 24
 NEWS_BATCH_CONCURRENCY = 4
 TITLE_MAX_OUTPUT_TOKENS = 16_384
 TITLE_ASCII_PATTERN = r"^[\x20-\x7e]+$"
+TITLE_FRAGMENT_ASCII_PATTERN = r"^[\x20-\x7e]*$"
 DISCLOSURE_SECTION_MAX_OUTPUT_TOKENS = 16_384
 
 DISCLOSURE_TEXT_INSTRUCTIONS = """Translate one Korean regulatory filing text fragment into
@@ -185,7 +189,8 @@ class _StructuredTitle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^title-[0-9]+$")
-    translated_text: EnglishGeneratedText = Field(max_length=1_000)
+    translated_text: EnglishGeneratedText | None = Field(default=None, max_length=1_000)
+    translated_fragments: tuple[str, ...] | None = None
 
 
 class _StructuredTitleBatch(BaseModel):
@@ -346,11 +351,10 @@ class TranslationService:
             if source_item.id in returned:
                 raise _invalid_output("title_duplicate_id")
             try:
-                _verify_title_claim_direction(source_item.source_text, parsed_item.translated_text)
-                _verify_title_tokens(source_item, parsed_item.translated_text)
-                translated_text = _restore_currency_amounts(
-                    source_item.source_text, parsed_item.translated_text
-                )
+                generated_text = _generated_title_text(source_item, parsed_item)
+                _verify_title_claim_direction(source_item.source_text, generated_text)
+                _verify_title_tokens(source_item, generated_text)
+                translated_text = _restore_currency_amounts(source_item.source_text, generated_text)
                 translated_text = _restore_title_terms(source_item.source_text, translated_text)
                 if target_locale.lower().split("-", maxsplit=1)[0] == "en":
                     translated_text = _normalize_english_output(translated_text)
@@ -1002,7 +1006,7 @@ def _canonicalize_non_krw_quantities(source_text: str) -> str:
     return KOREAN_MAGNITUDE_QUANTITY_PATTERN.sub(replace, source_text)
 
 
-def _title_request_item(item: TitleSource, identifier: str) -> dict[str, object]:
+def _protected_title_source(item: TitleSource) -> tuple[str, dict[str, str]]:
     source_text = item.source_text.replace("弗", "달러")
     if "두산에너빌리티" in source_text:
         # 금액 보호 토큰 뒤에 별칭 조각이 남지 않도록 원문의 주가 수준을 풀어 쓴다.
@@ -1011,10 +1015,20 @@ def _title_request_item(item: TitleSource, identifier: str) -> dict[str, object]
         _canonicalize_non_krw_quantities(source_text)
     )
     protected_source = protected_source.replace("삼전닉스", "__TERM_SAMJEONNIX__")
+    values = dict(protected_amounts)
+    if "삼전닉스" in item.source_text:
+        values["__TERM_SAMJEONNIX__"] = "Samjeonnix"
+    return protected_source, values
+
+
+def _title_request_item(item: TitleSource, identifier: str) -> dict[str, object]:
+    protected_source, protected_values = _protected_title_source(item)
     request: dict[str, object] = {
         "id": identifier,
         "source_text": protected_source,
-        "protected_currency_tokens": [token for token, _ in protected_amounts],
+        "protected_currency_tokens": [
+            token for token in protected_values if token.startswith("__KRW")
+        ],
         "protected_term_tokens": (
             ["__TERM_SAMJEONNIX__"] if "삼전닉스" in item.source_text else []
         ),
@@ -1051,28 +1065,50 @@ _TITLE_TOKEN_PATTERN = re.compile(r"__KRW_AMOUNT_[0-9]+__|__TERM_[A-Z_]+__")
 
 
 def _title_tokens(item: TitleSource) -> list[str]:
-    source = str(_title_request_item(item, "title-0")["source_text"])
+    source, _ = _protected_title_source(item)
     return _TITLE_TOKEN_PATTERN.findall(source)
 
 
 def _title_output_schema(sources: dict[str, TitleSource]) -> dict[str, Any]:
-    # 생성 문법은 형태만 제한한다. 토큰·청구 방향은 반환 뒤 독립적으로 검증한다.
-    # 문장 의미와 가변 토큰을 연결한 정규식은 정상 문장 생성도 중간에 막을 수 있다.
+    # 보호 값은 모델이 복사하지 않고 고정 길이 조각 사이에 서버가 삽입한다.
     variants = []
-    for identifier in sources:
+    for identifier, source in sources.items():
+        token_count = len(_title_tokens(source))
+        output_property = (
+            {
+                "translated_fragments": {
+                    "type": "array",
+                    "minItems": token_count + 1,
+                    "maxItems": token_count + 1,
+                    "items": {
+                        "type": "string",
+                        "maxLength": 1_000,
+                        "pattern": TITLE_FRAGMENT_ASCII_PATTERN,
+                    },
+                    "description": (
+                        "English text before, between, and after protected tokens. "
+                        "Never include a protected token or its canonical value."
+                    ),
+                }
+            }
+            if token_count
+            else {
+                "translated_text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1_000,
+                    "pattern": TITLE_ASCII_PATTERN,
+                }
+            }
+        )
         variants.append(
             {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "enum": [identifier]},
-                    "translated_text": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 1000,
-                        "pattern": TITLE_ASCII_PATTERN,
-                    },
+                    **output_property,
                 },
-                "required": ["id", "translated_text"],
+                "required": ["id", *output_property],
                 "additionalProperties": False,
             }
         )
@@ -1089,6 +1125,48 @@ def _title_output_schema(sources: dict[str, TitleSource]) -> dict[str, Any]:
         "required": ["items"],
         "additionalProperties": False,
     }
+
+
+def _generated_title_text(source: TitleSource, output: _StructuredTitle) -> str:
+    tokens = _title_tokens(source)
+    translated_text = cast(str | None, getattr(output, "translated_text", None))
+    fragments = cast(tuple[str, ...] | None, getattr(output, "translated_fragments", None))
+    if not tokens:
+        if fragments is not None or translated_text is None:
+            raise _invalid_output("title_output_contract_mismatch")
+        return translated_text
+
+    if translated_text is not None or fragments is None or len(fragments) != len(tokens) + 1:
+        raise _invalid_output("title_fragment_count_mismatch")
+    if any(
+        len(fragment) > 1_000
+        or re.fullmatch(TITLE_FRAGMENT_ASCII_PATTERN, fragment) is None
+        or _TITLE_TOKEN_PATTERN.search(fragment)
+        for fragment in fragments
+    ):
+        raise _invalid_output("title_fragment_contract_mismatch")
+    _, protected_values = _protected_title_source(source)
+    combined_fragments = " ".join(fragments)
+    if any(
+        (
+            token.startswith("__KRW")
+            and _contains_currency_value(protected_values[token], combined_fragments)
+        )
+        or (
+            token.startswith("__TERM")
+            and protected_values[token].casefold() in combined_fragments.casefold()
+        )
+        for token in tokens
+    ):
+        raise _invalid_output("title_fragment_contains_protected_value")
+
+    parts = [fragments[0]]
+    for token, fragment in zip(tokens, fragments[1:], strict=True):
+        parts.extend((token, fragment))
+    generated = "".join(parts)
+    if not generated.strip():
+        raise _invalid_output("title_blank_translation")
+    return generated
 
 
 def _verify_title_tokens(source: TitleSource, translated: str) -> None:
