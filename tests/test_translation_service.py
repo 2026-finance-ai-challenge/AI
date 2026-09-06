@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import json
-import re
 from types import SimpleNamespace
 
 import httpx
@@ -14,6 +13,7 @@ from k_market_ai.core.errors import AppError
 from k_market_ai.translations.domain import TitleSource
 from k_market_ai.translations.service import (
     TITLE_ASCII_PATTERN,
+    TITLE_FRAGMENT_ASCII_PATTERN,
     TranslationService,
     _canonicalize_non_krw_quantities,
     _currency_conversions,
@@ -62,7 +62,7 @@ def test_title_batch_validates_hashes_and_restores_input_order() -> None:
     assert schema["properties"]["items"]["maxItems"] == 2
 
 
-def test_title_schema_limits_shape_without_coupling_semantic_token_order() -> None:
+def test_title_schema_anchors_protected_values_between_fixed_count_fragments() -> None:
     schema = _title_output_schema(
         {
             "title-0": _title("one", "삼전닉스 투자 1조원, 지원 20억원"),
@@ -70,17 +70,18 @@ def test_title_schema_limits_shape_without_coupling_semantic_token_order() -> No
         }
     )
     variants = schema["properties"]["items"]["items"]["anyOf"]
-    assert variants[0]["properties"]["translated_text"]["pattern"] == TITLE_ASCII_PATTERN
-    assert re.fullmatch(TITLE_ASCII_PATTERN, "Doosan Enerbility at __KRW_AMOUNT_0__")
-    assert not re.fullmatch(TITLE_ASCII_PATTERN, "Doosan Enerbility __KRW_AMOUNT_0__빌리티")
-    assert not re.fullmatch(TITLE_ASCII_PATTERN, "Alteogen's 몸값")
+    protected = variants[0]["properties"]["translated_fragments"]
+    assert protected["minItems"] == protected["maxItems"] == 4
+    assert protected["items"]["pattern"] == TITLE_FRAGMENT_ASCII_PATTERN
+    assert "translated_text" not in variants[0]["properties"]
+    assert variants[1]["properties"]["translated_text"]["pattern"] == TITLE_ASCII_PATTERN
     assert variants[0]["properties"]["id"]["enum"] == ["title-0"]
     assert variants[1]["properties"]["id"]["enum"] == ["title-1"]
 
 
 def test_deployment_environment_cannot_mislabel_title_prompt(monkeypatch) -> None:
     monkeypatch.setenv("KMARKET_AI_TITLE_TRANSLATION_PROMPT_VERSION", "obsolete-prompt")
-    assert Settings().title_translation_prompt_version == "financial-title-translation-v13"
+    assert Settings().title_translation_prompt_version == "financial-title-translation-v14"
 
 
 def test_news_prompt_version_is_owned_by_code(monkeypatch):
@@ -105,7 +106,11 @@ def test_currency_token_cannot_hide_an_untranslated_nickname_suffix() -> None:
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text="Doosan Enerbility recovers '__KRW_AMOUNT_0__Bil... wait",
+                    translated_text=None,
+                    translated_fragments=(
+                        "Doosan Enerbility recovers '",
+                        "Bil... wait",
+                    ),
                 ),
             )
         )
@@ -197,17 +202,18 @@ def test_title_claim_direction_schema_and_server_reject_reversal(
 ):
     item = _title("one", source)
     schema = _title_output_schema({"title-0": item})
-    text_schema = schema["properties"]["items"]["items"]["anyOf"][0]["properties"][
-        "translated_text"
+    fragment_schema = schema["properties"]["items"]["items"]["anyOf"][0]["properties"][
+        "translated_fragments"
     ]
-    # 생성 문법과 의미 검증을 분리해도 반대 방향의 문장은 저장 전에 거절한다.
-    assert re.fullmatch(text_schema["pattern"], translated)
+    fragments = tuple(translated.split("__KRW_AMOUNT_0__"))
+    assert len(fragments) == fragment_schema["minItems"]
     responses = FakeResponses(
         SimpleNamespace(
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text=translated,
+                    translated_text=None,
+                    translated_fragments=fragments,
                 ),
             )
         )
@@ -223,20 +229,14 @@ def test_title_claim_direction_schema_and_server_reject_reversal(
     assert responses.calls == 1
 
 
-@pytest.mark.parametrize(
-    "translated",
-    [
-        "__KRW_AMOUNT_0__ and __KRW_AMOUNT_0__",
-        "__KRW_AMOUNT_0__ and __KRW_AMOUNT_7__",
-    ],
-)
-def test_title_does_not_silently_remove_duplicate_or_unknown_tokens(translated, caplog):
+def test_title_fragments_reject_provider_injected_protected_tokens(caplog):
     responses = FakeResponses(
         SimpleNamespace(
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text=translated,
+                    translated_text=None,
+                    translated_fragments=("Samsung Electro-Mechanics invests ", "__KRW_AMOUNT_7__"),
                 ),
             )
         )
@@ -250,7 +250,7 @@ def test_title_does_not_silently_remove_duplicate_or_unknown_tokens(translated, 
             )
         )
     assert error.value.code == "AI_INVALID_OUTPUT"
-    assert "title_protected_token_mismatch" in caplog.text
+    assert "title_fragment_contract_mismatch" in caplog.text
     assert responses.calls == 1
 
 
@@ -291,9 +291,8 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text=(
-                        "Target Price at __KRW_AMOUNT_0__ After Raising __KRW_AMOUNT_1__"
-                    ),
+                    translated_text=None,
+                    translated_fragments=("Target Price at ", " After Raising ", ""),
                 ),
             )
         )
@@ -310,6 +309,58 @@ def test_english_title_batch_requires_standard_krw_conversion() -> None:
         "__KRW_AMOUNT_1__",
     ]
     assert result.items[0].translated_text.startswith("Target Price")
+
+
+def test_failed_sk_square_title_uses_server_owned_currency_anchor() -> None:
+    source = _title("T1", "최근 5거래일 SK스퀘어 주가 100만 원 선 공방")
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=None,
+                    translated_fragments=(
+                        "SK Square stock battles around ",
+                        " after five trading days",
+                    ),
+                ),
+            )
+        )
+    )
+
+    result = asyncio.run(_service(responses).translate_titles((source,), "en", "news-title-v3"))
+
+    assert result.items[0].translated_text == (
+        "SK Square stock battles around KRW 1 million after five trading days"
+    )
+
+
+@pytest.mark.parametrize(
+    "fragments",
+    [
+        ("SK Square stock at ",),
+        ("SK Square stock at KRW 1 million around ", ""),
+    ],
+)
+def test_protected_title_contract_rejects_missing_or_duplicated_anchor(fragments, caplog) -> None:
+    source = _title("T1", "최근 5거래일 SK스퀘어 주가 100만 원 선 공방")
+    responses = FakeResponses(
+        SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    id="title-0",
+                    translated_text=None,
+                    translated_fragments=fragments,
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(AppError) as error:
+        asyncio.run(_service(responses).translate_titles((source,), "en", "news-title-v3"))
+
+    assert error.value.code == "AI_INVALID_OUTPUT"
+    assert "title_fragment_" in caplog.text
 
 
 def test_korean_currency_conversion_preserves_round_and_compound_units() -> None:
@@ -360,7 +411,8 @@ def test_english_title_batch_rejects_romanized_or_missing_currency_conversion() 
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text="Raises 344 eok won in funding",
+                    translated_text=None,
+                    translated_fragments=("Raises 344 eok won and ", " in funding"),
                 ),
             )
         )
@@ -379,9 +431,11 @@ def test_english_title_batch_preserves_samjeonnix_and_currency_spacing() -> None
             items=(
                 SimpleNamespace(
                     id="title-0",
-                    translated_text=(
-                        "'__TERM_SAMJEONNIX__' incentives lift spending; "
-                        "consumption __KRW_AMOUNT_0__rises"
+                    translated_text=None,
+                    translated_fragments=(
+                        "'",
+                        "' incentives lift spending; consumption ",
+                        " rises",
                     ),
                 ),
             )
@@ -807,9 +861,7 @@ def test_person_name_jo_is_not_a_romanized_currency_unit():
 @pytest.mark.parametrize(
     ("source", "translated", "reason"),
     [
-        ("삼전닉스 비공개원문", "Stocks rise", "title_protected_term_missing"),
         ("삼성전자 비공개원문", "Funding 3 jo", "title_romanized_currency"),
-        ("투자 1조원 비공개원문", "Funding rises", "missing_currency_token"),
     ],
 )
 def test_title_contract_failure_logs_hash_without_content(source, translated, reason, caplog):
