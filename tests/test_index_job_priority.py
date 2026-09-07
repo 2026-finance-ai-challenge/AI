@@ -20,4 +20,7 @@ def test_claims_newest_disclosure_before_historical_embedding_backlog() -> None:
     assert asyncio.run(repository.claim_index_job("priority-test")) is None
 
     sql, _ = connection.execute.call_args.args
-    assert "ORDER BY disclosure.filed_date DESC, job.business_key DESC" in sql
+    assert "job.job_type = 'DISCLOSURE_EMBEDDING'" in sql
+    assert "ORDER BY job.business_key DESC" in sql
+    assert "AND EXISTS" in sql
+    assert "JOIN disclosure ON disclosure.receipt_number = job.business_key" not in sql
