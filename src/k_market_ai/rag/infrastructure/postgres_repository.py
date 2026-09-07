@@ -91,17 +91,7 @@ class PostgresRagRepository(RagRepository):
                 WITH candidate AS (
                     SELECT job.id
                     FROM ingestion_job AS job
-                    JOIN disclosure ON disclosure.receipt_number = job.business_key
-                    JOIN security ON security.id = disclosure.security_id
-                    JOIN service_stock_universe AS universe
-                      ON universe.stock_code = security.stock_code
-                    JOIN disclosure_document AS document
-                      ON document.disclosure_id = disclosure.id
-                     AND document.is_current = TRUE
-                     AND document.payload_zstd IS NOT NULL
-                    WHERE job.job_type = %s
-                      AND security.active
-                      AND security.common_stock
+                    WHERE job.job_type = 'DISCLOSURE_EMBEDDING'
                       AND pg_database_size(current_database()) < 55834574848
                       AND job.available_at <= CURRENT_TIMESTAMP
                       AND (
@@ -111,8 +101,22 @@ class PostgresRagRepository(RagRepository):
                               AND job.locked_at < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
                           )
                       )
-                    ORDER BY disclosure.filed_date DESC, job.business_key DESC,
-                             job.attempts DESC, job.available_at DESC, job.created_at DESC
+                      AND EXISTS (
+                          SELECT 1
+                          FROM disclosure
+                          JOIN security ON security.id = disclosure.security_id
+                          JOIN service_stock_universe AS universe
+                            ON universe.stock_code = security.stock_code
+                          JOIN disclosure_document AS document
+                            ON document.disclosure_id = disclosure.id
+                           AND document.is_current = TRUE
+                           AND document.payload_zstd IS NOT NULL
+                          WHERE disclosure.receipt_number = job.business_key
+                            AND security.active
+                            AND security.common_stock
+                      )
+                    -- 접수번호의 날짜·순번을 이용해 대기 작업 인덱스에서 최신 공시를 바로 선점한다.
+                    ORDER BY job.business_key DESC
                     FOR UPDATE OF job SKIP LOCKED
                     LIMIT 1
                 )
@@ -126,7 +130,7 @@ class PostgresRagRepository(RagRepository):
                 WHERE job.id = candidate.id
                 RETURNING job.business_key, job.attempts
                 """,
-                (INDEX_JOB_TYPE, worker_id),
+                (worker_id,),
             )
             row = await cursor.fetchone()
         return None if row is None else IndexJob(receipt_number=str(row[0]), attempts=int(row[1]))
